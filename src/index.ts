@@ -1,5 +1,12 @@
-function greet(name: string): string {
-  return `Hello, ${name}!`;
-}
+// Load environment variables
+import "dotenv/config";
 
-console.log(greet("Node.js with TypeScript"));
+import { createGeminiClient } from "./llm/index.js";
+
+// Example: Initialize Gemini client
+// This will be used by the orchestrator later
+const geminiClient = createGeminiClient();
+
+console.log("Gemini LLM client initialized successfully!");
+
+// TODO: Initialize agents and start orchestrator here
