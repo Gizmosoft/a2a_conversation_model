@@ -10,7 +10,7 @@ export class GeminiClient implements LLMClient {
 
   constructor(apiKey: string, modelName: string = "gemini-pro") {
     if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is required. Set it in your .env file.");
+      throw new Error("API Key is required. Set it in your .env file.");
     }
     this.genAI = new GoogleGenerativeAI(apiKey);
     this.modelName = modelName;
@@ -101,14 +101,13 @@ export class GeminiClient implements LLMClient {
 // FACTORY FUNCTION
 // ============================================
 export function createGeminiClient(apiKey?: string, modelName?: string): GeminiClient {
-  // Access process.env via globalThis to avoid TypeScript errors when types: [] is set
-  const nodeProcess = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process;
-  const key = apiKey || nodeProcess?.env?.GEMINI_API_KEY;
-  if (!key) {
+  console.log("apiKey", apiKey);
+
+  if (!apiKey || typeof apiKey !== "string") {
     throw new Error(
       "GEMINI_API_KEY is required. Either pass it as an argument or set it in your .env file."
     );
   }
-  return new GeminiClient(key, modelName);
+  return new GeminiClient(apiKey, modelName);
 }
 

@@ -1,12 +1,48 @@
-// Load environment variables
-import "dotenv/config";
+import { createGeminiClient, createOllamaClient } from "./llm/index.js";
+import { createAgent } from "./agents/agent-builder.js";
+import { alicePersonality, bobPersonality } from "./agents/personalities/index.js";
+import { ConversationOrchestrator } from "./orchestrator/index.js";
+import { config } from "./config/config.js";
 
-import { createGeminiClient } from "./llm/index.js";
+// ============================================
+// MAIN FUNCTION
+// ============================================
+async function main(): Promise<void> {
+  console.log(`Starting in ${config.nodeBuild} mode`);
+  console.log(`Using model: ${config.modelName}`);
+  try {
+    // ============================================
+    // INITIALIZE LLM CLIENT
+    // ============================================
+    // const llmClient = createGeminiClient(config.geminiApiKey, config.modelName);
+    const llmClient = createOllamaClient(config.ollamaHostUrl, config.modelName);
 
-// Example: Initialize Gemini client
-// This will be used by the orchestrator later
-const geminiClient = createGeminiClient();
+    // ============================================
+    // CREATE AGENTS
+    // ============================================
+    const alice = createAgent("alice", alicePersonality, "Bob");
+    const bob = createAgent("bob", bobPersonality, "Alice");
 
-console.log("Gemini LLM client initialized successfully!");
+    // ============================================
+    // CREATE AND RUN ORCHESTRATOR
+    // ============================================
+    const orchestrator = new ConversationOrchestrator({
+      agentA: alice,
+      agentB: bob,
+      llmClient,
+      maxTurns: 5, // 5 turns = 5 exchanges between agents
+    });
 
-// TODO: Initialize agents and start orchestrator here
+    // Start the conversation
+    await orchestrator.run();
+  } catch (error) {
+    console.error("Error running conversation:", error);
+    const nodeProcess = (globalThis as { process?: { exit?: (code: number) => void } }).process;
+    nodeProcess?.exit?.(1);
+  }
+}
+
+// ============================================
+// ENTRY POINT
+// ============================================
+main();
