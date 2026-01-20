@@ -103,7 +103,6 @@ export class GeminiClient implements LLMClient {
 // FACTORY FUNCTION
 // ============================================
 export function createGeminiClient(apiKey?: string, modelName?: string): GeminiClient {
-  console.log("apiKey", apiKey);
 
   if (!apiKey || typeof apiKey !== "string") {
     throw new Error(

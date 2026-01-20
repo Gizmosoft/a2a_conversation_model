@@ -1,4 +1,5 @@
-import type { LogEntry, LogLevel, LoggerConfig, Logger } from "./types.js";
+import type { LogEntry, LoggerConfig, Logger } from "./types.js";
+import { LogLevel } from "./types.js";
 import { LogFileWriter } from "./file-writer.js";
 
 // ============================================
@@ -68,8 +69,8 @@ export class AppLogger implements Logger {
       timestamp: new Date(),
       level,
       message,
-      context,
-      error,
+      ...(context && { context }),
+      ...(error && { error }),
     };
 
     // Console output
@@ -91,9 +92,12 @@ export class AppLogger implements Logger {
       }
     }
 
-    // File output
+    // File output - fire and forget to avoid blocking, but catch errors
     if (this.config.enableFile && this.initialized) {
-      await this.fileWriter.write(entry);
+      // Don't await to avoid blocking, but catch errors silently
+      this.fileWriter.write(entry).catch(() => {
+        // Silently ignore file write errors to prevent crashes
+      });
     }
   }
 

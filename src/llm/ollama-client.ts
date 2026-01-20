@@ -19,38 +19,81 @@ export class OllamaClient implements LLMClient {
     // Ollama supports system/user/assistant roles directly
     const ollamaMessages = this.convertMessagesToOllamaFormat(messages, systemPrompt);
 
+    const url = `${this.baseUrl}/api/chat`;
+    const requestBody = {
+      model: this.modelName,
+      messages: ollamaMessages,
+      options: {
+        temperature,
+        num_predict: maxTokens, // Ollama uses num_predict instead of max_tokens
+      },
+      stream: false, // We want the complete response
+    };
+
     try {
-      const response = await fetch(`${this.baseUrl}/api/chat`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: this.modelName,
-          messages: ollamaMessages,
-          options: {
-            temperature,
-            num_predict: maxTokens, // Ollama uses num_predict instead of max_tokens
+      // Create an AbortController for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, 60000); // 60 second timeout
+
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
           },
-          stream: false, // We want the complete response
-        }),
-      });
+          body: JSON.stringify(requestBody),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        if (fetchError instanceof Error) {
+          if (fetchError.name === "AbortError") {
+            throw new Error(`Ollama API timeout: Request took longer than 60 seconds. Model: "${this.modelName}", URL: ${url}`);
+          }
+          throw new Error(`Ollama fetch error: ${fetchError.message} (URL: ${url}, Model: ${this.modelName})`);
+        }
+        throw new Error(`Ollama fetch error: ${String(fetchError)} (URL: ${url}, Model: ${this.modelName})`);
+      }
 
       if (!response.ok) {
-        const errorText = await response.text();
+        let errorText = "";
+        try {
+          errorText = await response.text();
+        } catch {
+          errorText = "Could not read error response";
+        }
         throw new Error(
           `Ollama API error: ${response.status} ${response.statusText} - ${errorText}`
         );
       }
 
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch (jsonError) {
+        throw new Error(`Ollama response parsing error: ${jsonError instanceof Error ? jsonError.message : String(jsonError)}`);
+      }
 
       return this.formatResponse(data);
     } catch (error) {
       if (error instanceof Error) {
-        throw new Error(`Ollama API error: ${error.message}`);
+        if (error.message.includes("timeout")) {
+          throw error; // Already formatted
+        }
+        if (error.message.includes("fetch") || error.message.includes("ECONNREFUSED")) {
+          throw new Error(`Ollama connection error: ${error.message}. Check if Ollama is running at ${url}`);
+        }
+        // Re-throw if already formatted, otherwise wrap
+        if (error.message.includes("Ollama")) {
+          throw error;
+        }
+        throw new Error(`Ollama API error: ${error.message} (URL: ${url}, Model: ${this.modelName})`);
       }
-      throw new Error(`Ollama API error: ${String(error)}`);
+      throw new Error(`Ollama API error: ${String(error)} (URL: ${url}, Model: ${this.modelName})`);
     }
   }
 

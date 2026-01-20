@@ -10,11 +10,51 @@ import { TopicManager } from "./topics/index.js";
 // ============================================
 // MAIN FUNCTION
 // ============================================
+let logger: ReturnType<typeof createLogger> | null = null;
+
+// Graceful shutdown handler
+async function cleanup(): Promise<void> {
+  if (logger) {
+    await logger.close();
+  }
+}
+
+// Register cleanup handlers for graceful shutdown
+const nodeProcess = (globalThis as { process?: { exit?: (code: number) => void; on?: (event: string, handler: (...args: unknown[]) => void) => void } }).process;
+if (nodeProcess?.on) {
+  // Handle unhandled rejections and exceptions with logging
+  nodeProcess.on("unhandledRejection", async (reason, promise) => {
+    console.error("[Unhandled Rejection]", reason);
+    console.error("[Promise]", promise);
+    await cleanup();
+    nodeProcess.exit?.(1);
+  });
+
+  nodeProcess.on("uncaughtException", async (error) => {
+    console.error("[Uncaught Exception]", error);
+    await cleanup();
+    nodeProcess.exit?.(1);
+  });
+
+  // Handle graceful shutdown signals
+  nodeProcess.on("SIGINT", async () => {
+    console.log("\n[Shutdown] Received SIGINT, cleaning up...");
+    await cleanup();
+    nodeProcess.exit?.(0);
+  });
+
+  nodeProcess.on("SIGTERM", async () => {
+    console.log("\n[Shutdown] Received SIGTERM, cleaning up...");
+    await cleanup();
+    nodeProcess.exit?.(0);
+  });
+}
+
 async function main(): Promise<void> {
   // ============================================
   // INITIALIZE LOGGER
   // ============================================
-  const logger = createLogger({
+  logger = createLogger({
     logDir: config.logDir || "src/logs",
     level: (config.logLevel as LogLevel) || LogLevel.INFO,
     enableConsole: true,
@@ -85,18 +125,19 @@ async function main(): Promise<void> {
     memoryStore.close();
 
     logger.info("Application shutting down gracefully");
-    await logger.close();
+    await cleanup();
   } catch (error) {
-    logger.error(
-      "Fatal error running conversation",
-      error instanceof Error ? error : new Error(String(error)),
-      {
-        nodeBuild: config.nodeBuild,
-        modelName: config.modelName,
-      }
-    );
-
-    await logger.close();
+    if (logger) {
+      logger.error(
+        "Fatal error running conversation",
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          nodeBuild: config.nodeBuild,
+          modelName: config.modelName,
+        }
+      );
+    }
+    await cleanup();
     const nodeProcess = (globalThis as { process?: { exit?: (code: number) => void } }).process;
     nodeProcess?.exit?.(1);
   }
@@ -105,4 +146,20 @@ async function main(): Promise<void> {
 // ============================================
 // ENTRY POINT
 // ============================================
-main();
+main().catch((error) => {
+  console.error("\n[FATAL] Unhandled error in main():");
+  console.error(error);
+  if (error instanceof Error) {
+    console.error("Error stack:", error.stack);
+  }
+  cleanup()
+    .then(() => {
+      const nodeProcess = (globalThis as { process?: { exit?: (code: number) => void } }).process;
+      nodeProcess?.exit?.(1);
+    })
+    .catch((cleanupError) => {
+      console.error("Error during cleanup:", cleanupError);
+      const nodeProcess = (globalThis as { process?: { exit?: (code: number) => void } }).process;
+      nodeProcess?.exit?.(1);
+    });
+});

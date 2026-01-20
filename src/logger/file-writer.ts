@@ -1,4 +1,5 @@
-import { promises as fs } from "fs";
+import { appendFile } from "fs/promises";
+import { mkdir } from "fs/promises";
 import { join } from "path";
 import type { LogEntry, LogLevel } from "./types.js";
 
@@ -7,7 +8,7 @@ import type { LogEntry, LogLevel } from "./types.js";
 // ============================================
 export class LogFileWriter {
   private logDir: string;
-  private fileHandles: Map<string, fs.FileHandle> = new Map();
+  private initialized: boolean = false;
 
   constructor(logDir: string) {
     this.logDir = logDir;
@@ -18,12 +19,14 @@ export class LogFileWriter {
    */
   async initialize(): Promise<void> {
     try {
-      await fs.mkdir(this.logDir, { recursive: true });
+      await mkdir(this.logDir, { recursive: true });
+      this.initialized = true;
     } catch (error) {
       // Directory might already exist, that's okay
       if (error && typeof error === "object" && "code" in error && error.code !== "EEXIST") {
         throw error;
       }
+      this.initialized = true;
     }
   }
 
@@ -34,20 +37,6 @@ export class LogFileWriter {
     const date = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
     const filename = `${level}-${date}.log`;
     return join(this.logDir, filename);
-  }
-
-  /**
-   * Get or create file handle for a log level
-   */
-  private async getFileHandle(level: LogLevel): Promise<fs.FileHandle> {
-    const filePath = this.getLogFilePath(level);
-
-    if (!this.fileHandles.has(filePath)) {
-      const handle = await fs.open(filePath, "a");
-      this.fileHandles.set(filePath, handle);
-    }
-
-    return this.fileHandles.get(filePath)!;
   }
 
   /**
@@ -66,25 +55,46 @@ export class LogFileWriter {
 
   /**
    * Write log entry to appropriate file
+   * Uses appendFile directly instead of keeping handles open to avoid GC issues
    */
   async write(entry: LogEntry): Promise<void> {
+    if (!this.initialized) {
+      return; // Skip writing if not initialized
+    }
+
     try {
-      const handle = await this.getFileHandle(entry.level);
+      const filePath = this.getLogFilePath(entry.level);
       const logLine = this.formatLogEntry(entry);
-      await handle.writeFile(logLine, { flag: "a" });
+      
+      // Use appendFile directly - opens, writes, and closes automatically
+      // This avoids FileHandle lifecycle issues with garbage collection
+      await appendFile(filePath, logLine, "utf8");
     } catch (error) {
       // Silently fail if file writing fails (don't break the app)
-      console.error("Failed to write log to file:", error);
+      // Only log actual errors, not permission/access issues
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (
+        !errorMsg.includes("closed") &&
+        !errorMsg.includes("ERR_INVALID_STATE") &&
+        !errorMsg.includes("EBADF") &&
+        !errorMsg.includes("ENOENT") // File not found - directory might not exist yet
+      ) {
+        // Only log unexpected errors
+        try {
+          console.error("Failed to write log to file:", errorMsg);
+        } catch {
+          // Ignore if console is also unavailable
+        }
+      }
     }
   }
 
   /**
    * Close all file handles
+   * No-op since we don't keep handles open anymore
    */
   async close(): Promise<void> {
-    for (const handle of this.fileHandles.values()) {
-      await handle.close();
-    }
-    this.fileHandles.clear();
+    this.initialized = false;
+    // No handles to close - we use appendFile directly
   }
 }

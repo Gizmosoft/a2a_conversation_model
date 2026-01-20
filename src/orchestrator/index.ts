@@ -202,12 +202,25 @@ export class ConversationOrchestrator {
       maxTokens: currentAgent.maxTokensPerResponse,
     });
 
-    const response = await this.llmClient.generate({
-      systemPrompt,
-      messages: conversationMessages,
-      temperature: currentAgent.temperature,
-      maxTokens: currentAgent.maxTokensPerResponse,
-    });
+    let response;
+    try {
+      response = await this.llmClient.generate({
+        systemPrompt,
+        messages: conversationMessages,
+        temperature: currentAgent.temperature,
+        maxTokens: currentAgent.maxTokensPerResponse,
+      });
+    } catch (error) {
+      this.logger.error("Error generating LLM response", error instanceof Error ? error : new Error(String(error)), {
+        agentId: currentAgent.id,
+        turnNumber: this.state.currentTurn + 1,
+        llmProvider: this.llmProvider,
+        modelName: this.modelName,
+      });
+      console.error(`\n[Error] Failed to generate response for ${currentAgent.personality.name}:`);
+      console.error(error instanceof Error ? error.message : String(error));
+      throw error; // Re-throw to stop the conversation
+    }
 
     this.logger.debug("LLM response generated", {
       agentId: currentAgent.id,
@@ -343,21 +356,32 @@ export class ConversationOrchestrator {
         currentAgent: currentAgent.personality.name,
         conversationId: this.conversationId,
       });
-
+      
       console.log(`[Turn ${turnNumber}] ${currentAgent.personality.name}:`);
 
-      await this.executeTurn();
+      try {
+        await this.executeTurn();
 
-      // Display the latest message
-      const lastMessage = this.state.messages[this.state.messages.length - 1];
-      if (lastMessage) {
-        this.logger.debug("Message generated", {
+        // Display the latest message
+        const lastMessage = this.state.messages[this.state.messages.length - 1];
+        if (lastMessage) {
+          this.logger.debug("Message generated", {
+            turnNumber,
+            agentId: lastMessage.agentId,
+            messageLength: lastMessage.content.length,
+            conversationId: this.conversationId,
+          });
+          console.log(`${lastMessage.content}\n`);
+        }
+      } catch (error) {
+        this.logger.error("Error executing conversation turn", error instanceof Error ? error : new Error(String(error)), {
           turnNumber,
-          agentId: lastMessage.agentId,
-          messageLength: lastMessage.content.length,
+          agentId: currentAgent.id,
           conversationId: this.conversationId,
         });
-        console.log(`${lastMessage.content}\n`);
+        console.error(`\n[Error] Conversation failed at turn ${turnNumber}. Stopping conversation.`);
+        this.state.isComplete = true; // Stop the conversation on error
+        throw error; // Re-throw to propagate to main
       }
     }
 
