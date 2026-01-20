@@ -47,7 +47,9 @@ export class GeminiClient implements LLMClient {
 
       return this.formatResponse(response);
     } catch (error) {
-      throw new Error(`Gemini API error: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Gemini API error: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 
@@ -110,4 +112,3 @@ export function createGeminiClient(apiKey?: string, modelName?: string): GeminiC
   }
   return new GeminiClient(apiKey, modelName);
 }
-

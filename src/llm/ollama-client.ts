@@ -38,7 +38,9 @@ export class OllamaClient implements LLMClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Ollama API error: ${response.status} ${response.statusText} - ${errorText}`);
+        throw new Error(
+          `Ollama API error: ${response.status} ${response.statusText} - ${errorText}`
+        );
       }
 
       const data = await response.json();
@@ -57,13 +59,14 @@ export class OllamaClient implements LLMClient {
     const content = response.message?.content || "";
 
     // Ollama may provide token usage in response.prompt_eval_count and response.eval_count
-    const usage = response.prompt_eval_count !== undefined
-      ? {
-          promptTokens: response.prompt_eval_count,
-          completionTokens: response.eval_count,
-          totalTokens: (response.prompt_eval_count || 0) + (response.eval_count || 0),
-        }
-      : undefined;
+    const usage =
+      response.prompt_eval_count !== undefined
+        ? {
+            promptTokens: response.prompt_eval_count,
+            completionTokens: response.eval_count,
+            totalTokens: (response.prompt_eval_count || 0) + (response.eval_count || 0),
+          }
+        : undefined;
 
     return {
       content,
@@ -110,17 +113,13 @@ export class OllamaClient implements LLMClient {
 // ============================================
 // FACTORY FUNCTION
 // ============================================
-export function createOllamaClient(
-  baseUrl?: string,
-  modelName?: string
-): OllamaClient {
+export function createOllamaClient(baseUrl?: string, modelName?: string): OllamaClient {
   // Access process.env via globalThis to avoid TypeScript errors when types: [] is set
   const env = (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } })
     .process?.env;
-  
+
   const url = baseUrl || env?.["OLLAMA_BASE_URL"] || "http://localhost:11434";
   const model = modelName || env?.["OLLAMA_MODEL"] || "llama3";
 
   return new OllamaClient(url, model);
 }
-

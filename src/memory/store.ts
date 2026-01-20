@@ -114,7 +114,7 @@ export class EpisodicMemoryStore {
     if (updates.isComplete !== undefined) {
       fields.push("is_complete = ?");
       values.push(updates.isComplete ? 1 : 0);
-      
+
       if (updates.isComplete) {
         fields.push("completed_at = CURRENT_TIMESTAMP");
       }
@@ -123,9 +123,7 @@ export class EpisodicMemoryStore {
     if (fields.length === 0) return;
 
     values.push(conversationId);
-    const stmt = this.db.prepare(
-      `UPDATE conversations SET ${fields.join(", ")} WHERE id = ?`
-    );
+    const stmt = this.db.prepare(`UPDATE conversations SET ${fields.join(", ")} WHERE id = ?`);
     stmt.run(...values);
   }
 
@@ -145,7 +143,22 @@ export class EpisodicMemoryStore {
       WHERE id = ?
     `);
 
-    const row = stmt.get(conversationId) as any;
+    const row = stmt.get(conversationId) as
+      | {
+          id: number;
+          agentAId: string;
+          agentBId: string;
+          agentAName: string;
+          agentBName: string;
+          maxTurns: number;
+          totalTurns: number;
+          isComplete: number;
+          llmProvider?: string;
+          modelName?: string;
+          createdAt: string;
+          completedAt?: string | null;
+        }
+      | undefined;
     if (!row) return undefined;
 
     const record: ConversationRecord = {
@@ -205,7 +218,15 @@ export class EpisodicMemoryStore {
       ORDER BY turn_number ASC, id ASC
     `);
 
-    const rows = stmt.all(conversationId) as any[];
+    const rows = stmt.all(conversationId) as Array<{
+      id: number;
+      conversationId: number;
+      turnNumber: number;
+      role: string;
+      content: string;
+      agentId: string;
+      createdAt: string;
+    }>;
     return rows.map((row) => {
       const message: MessageRecord = {
         id: row.id,
@@ -250,7 +271,13 @@ export class EpisodicMemoryStore {
       LIMIT ?
     `);
 
-    const rows = stmt.all(agentAId, agentBId, agentBId, agentAId, limit) as any[];
+    const rows = stmt.all(agentAId, agentBId, agentBId, agentAId, limit) as Array<{
+      conversationId: number;
+      totalTurns: number;
+      createdAt: string;
+      agentAName: string;
+      agentBName: string;
+    }>;
 
     // Enrich with first and last messages
     return rows.map((row) => {
@@ -299,7 +326,12 @@ export class EpisodicMemoryStore {
       LIMIT ?
     `);
 
-    const rows = stmt.all(agentAId, agentBId, agentBId, agentAId, limit) as any[];
+    const rows = stmt.all(agentAId, agentBId, agentBId, agentAId, limit) as Array<{
+      conversationId: number;
+      turnNumber: number;
+      content: string;
+      agentId: string;
+    }>;
     return rows.map((row) => ({
       conversationId: row.conversationId,
       turnNumber: row.turnNumber,
@@ -319,4 +351,3 @@ export class EpisodicMemoryStore {
     this.db.close();
   }
 }
-

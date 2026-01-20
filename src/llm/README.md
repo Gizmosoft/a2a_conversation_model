@@ -5,6 +5,7 @@ This module provides a Gemini LLM client for the Agent2Agent conversation system
 ## Setup
 
 1. **Install dependencies:**
+
    ```bash
    npm install @google/generative-ai dotenv
    ```
@@ -31,15 +32,13 @@ const client = createGeminiClient(); // Reads GEMINI_API_KEY from .env
 // const client = createGeminiClient("your-api-key");
 
 // Generate a response
-const messages: LLMMessage[] = [
-  { role: "user", content: "Hello, how are you?" }
-];
+const messages: LLMMessage[] = [{ role: "user", content: "Hello, how are you?" }];
 
 const response = await client.generate({
   systemPrompt: "You are a friendly assistant.",
   messages: messages,
   temperature: 0.8,
-  maxTokens: 300
+  maxTokens: 300,
 });
 
 console.log(response.content);
@@ -59,12 +58,14 @@ Creates a new Gemini client instance.
 Generates a response from the LLM.
 
 **Options:**
+
 - `systemPrompt`: System instruction for the model
 - `messages`: Array of conversation messages
 - `temperature`: Optional temperature (0-1, default: 0.8)
 - `maxTokens`: Optional max output tokens (default: 300)
 
 **Returns:**
+
 - `content`: The generated text
 - `finishReason`: Why generation stopped
 - `usage`: Token usage information
@@ -72,7 +73,7 @@ Generates a response from the LLM.
 ## Models
 
 Supported Gemini models:
+
 - `gemini-pro` (default)
 - `gemini-1.5-pro`
 - `gemini-1.5-flash`
-

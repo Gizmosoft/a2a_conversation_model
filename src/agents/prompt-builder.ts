@@ -1,16 +1,16 @@
-import type { AgentConfig, ConversationContext, PersonalityConfig, PromptBuildResult } from "./types.ts";
+import type {
+  AgentConfig,
+  ConversationContext,
+  PersonalityConfig,
+  PromptBuildResult,
+} from "./types.ts";
 
 // ============================================
 // MAIN BUILDER
 // ============================================
-export function buildSystemPrompt(
-  personality: PersonalityConfig,
-  otherAgentName: string
-): string {
+export function buildSystemPrompt(personality: PersonalityConfig, otherAgentName: string): string {
   return `
-You are ${
-    personality.name
-  }, a real person having a genuine conversation with ${otherAgentName}.
+You are ${personality.name}, a real person having a genuine conversation with ${otherAgentName}.
 
 ## Your Background
 ${personality.background.trim()}
@@ -32,14 +32,18 @@ ${formatAsList(personality.avoidances)}
 
 ## Conversation Guidelines
 - You're having a natural conversation, not performing or being helpful
-- Respond in 1-4 sentences typically—occasionally longer if telling a story
+- Keep responses SHORT and to the point—typically 1-3 sentences, occasionally 4-5 if telling a story
+- Be concise and direct—avoid verbose explanations or unnecessary elaboration
+- Talk like a real person: use natural pauses, shorter phrases, and conversational flow
 - Ask questions when genuinely curious, not to be polite
 - It's fine to disagree, change subjects, or circle back to earlier topics
 - React authentically—if something bores you, gracefully redirect
-- Never break character or acknowledge being an AI
-- Don't narrate your actions or feelings in asterisks
+- Never break character or acknowledge being an AI or having context/memory systems
+- Don't narrate your actions, feelings, or mental processes in asterisks or meta-commentary
+- Never mention "previous conversations," "context," "retrieved information," or anything technical
+- If you remember something from past interactions, just naturally reference it without explaining how
 
-You are ${personality.name}. Speak as yourself.
+You are ${personality.name}. Speak as yourself—naturally, briefly, and authentically.
 `.trim();
 }
 
@@ -53,24 +57,35 @@ export function buildContextInjection(context: ConversationContext): string | un
   if (context.isOpening) {
     parts.push(
       `[Setting: You and ${context.otherAgentName} met each other now. ` +
-      `Start the conversation naturally.]`
+        `Start the conversation naturally.]`
     );
   }
 
-  // Topic transition guidance
+  // Topic transition guidance - keep subtle
   if (context.topicGuidance) {
+    // Make topic guidance more natural, less explicit about "lulls" or transitions
     parts.push(
-      `[The conversation has hit a lull. ${context.topicGuidance}]`
+      context.topicGuidance
+        .replace(/\[Topic Guidance:/g, "[Subtle hint:")
+        .replace(/The conversation has slowed down/g, "Consider")
     );
   }
 
-  // Memory injection
-  if (context.retrievedMemories && context.retrievedMemories.length > 0) {
-    const memories = context.retrievedMemories
-      .map(m => `- ${m}`)
-      .join("\n");
+  // Memory injection - present as natural remembered context, not explicit retrieval
+  // Only inject if we have memories and it's early in conversation
+  if (
+    context.retrievedMemories &&
+    context.retrievedMemories.length > 0 &&
+    context.conversationTurn <= 3
+  ) {
+    // Format as subtle background context, not explicit "you recall"
+    // Just present it as natural context that's part of knowing the other person
+    const memorySummary = context.retrievedMemories
+      .slice(0, 3) // Only use first 3 most relevant
+      .join(" | ");
+    // Inject very subtly - as if it's just known information, not retrieved
     parts.push(
-      `[You recall from previous conversations:\n${memories}]`
+      `[Context: You know ${context.otherAgentName} from past interactions. Previous topics mentioned: ${memorySummary}]`
     );
   }
 
@@ -89,7 +104,7 @@ export function buildFullPrompt(
 
   return {
     systemPrompt,
-    contextInjection
+    contextInjection,
   };
 }
 

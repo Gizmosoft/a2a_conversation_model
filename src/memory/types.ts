@@ -36,4 +36,3 @@ export interface PastConversationSummary {
   firstMessage?: string;
   lastMessage?: string;
 }
-

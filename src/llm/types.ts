@@ -26,4 +26,3 @@ export interface LLMGenerateResponse {
 export interface LLMClient {
   generate(options: LLMGenerateOptions): Promise<LLMGenerateResponse>;
 }
-
