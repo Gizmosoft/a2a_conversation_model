@@ -67,6 +67,10 @@ export class CipherOrchestrator {
   // PLUGIN MANAGEMENT
   // ============================================
 
+  /**
+   * Register an orchestration plugin to extend Cipher's capabilities.
+   * Automatically initializes the plugin if it has an initialize method.
+   */
   registerPlugin(plugin: OrchestrationPlugin): void {
     this.plugins.set(plugin.name, plugin);
     this.logger.info("Plugin registered", { pluginName: plugin.name, version: plugin.version });
@@ -81,6 +85,9 @@ export class CipherOrchestrator {
     }
   }
 
+  /**
+   * Get a registered plugin by name.
+   */
   getPlugin(name: string): OrchestrationPlugin | undefined {
     return this.plugins.get(name);
   }
@@ -419,7 +426,8 @@ export class CipherOrchestrator {
   // ============================================
 
   /**
-   * Log conversation event
+   * Log a conversation event for monitoring and debugging.
+   * Events are logged at debug level and can be used for analytics.
    */
   logConversationEvent(event: ConversationEvent): void {
     this.logger.debug(`Cipher: ${event.type}`, {
@@ -454,6 +462,11 @@ export class CipherOrchestrator {
   // PLUGIN NOTIFICATION HELPERS
   // ============================================
 
+  /**
+   * Notify all registered plugins about an orchestration event.
+   * Calls the appropriate plugin method with the provided arguments.
+   * Handles errors gracefully to prevent plugin failures from breaking orchestration.
+   */
   private async notifyPlugins<T extends keyof OrchestrationPlugin>(
     method: T,
     ...args: unknown[]

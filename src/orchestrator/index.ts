@@ -58,10 +58,17 @@ export class ConversationOrchestrator {
   // ============================================
   // GET CURRENT AGENT (based on whose turn it is)
   // ============================================
+
+  /**
+   * Get the agent configuration for the agent whose turn it is to speak.
+   */
   private getCurrentAgent(): AgentConfig {
     return this.state.currentAgentId === this.agentA.id ? this.agentA : this.agentB;
   }
 
+  /**
+   * Get the agent configuration for the agent who is not currently speaking.
+   */
   private getOtherAgent(): AgentConfig {
     return this.state.currentAgentId === this.agentA.id ? this.agentB : this.agentA;
   }
@@ -69,6 +76,11 @@ export class ConversationOrchestrator {
   // ============================================
   // BUILD CONVERSATION MESSAGES FOR LLM
   // ============================================
+
+  /**
+   * Convert conversation state messages into LLM message format.
+   * Maps agent messages to user/assistant roles from the current agent's perspective.
+   */
   private buildMessagesForLLM(): LLMMessage[] {
     const messages: LLMMessage[] = [];
 
@@ -87,6 +99,11 @@ export class ConversationOrchestrator {
   // ============================================
   // RETRIEVE PAST MEMORIES
   // ============================================
+
+  /**
+   * Retrieve relevant past conversation memories from the database.
+   * Returns formatted memory strings extracted from previous conversations between the same agents.
+   */
   private async retrievePastMemories(): Promise<string[]> {
     if (!this.memoryStore || !this.usePastMemories) {
       return [];
@@ -130,6 +147,12 @@ export class ConversationOrchestrator {
   // ============================================
   // ENGAGEMENT SCORE CALCULATION
   // ============================================
+
+  /**
+   * Calculate and update the conversation engagement score.
+   * Considers message length diversity, topic diversity, and response quality.
+   * Tracks consecutive low engagement turns for intervention decisions.
+   */
   private updateEngagementScore(): void {
     if (this.state.messages.length < 2) {
       this.engagementScore = 1.0;
@@ -184,6 +207,11 @@ export class ConversationOrchestrator {
   // ============================================
   // EXECUTE ONE CONVERSATION TURN
   // ============================================
+
+  /**
+   * Execute a single conversation turn: retrieve context, build prompt,
+   * generate response, and update conversation state.
+   */
   private async executeTurn(): Promise<void> {
     const currentAgent = this.getCurrentAgent();
     const otherAgent = this.getOtherAgent();
@@ -494,6 +522,11 @@ export class ConversationOrchestrator {
   // ============================================
   // RUN THE ENTIRE CONVERSATION
   // ============================================
+  /**
+   * Run the conversation between the two agents.
+   * Executes turns until maxTurns is reached or infinite mode is stopped.
+   * Manages conversation state, memory, topic guidance, and engagement tracking.
+   */
   async run(): Promise<ConversationState> {
     this.logger.info("Starting conversation", {
       agentA: this.agentA.personality.name,
@@ -647,6 +680,10 @@ export class ConversationOrchestrator {
   // ============================================
   // GET CURRENT STATE (for inspection)
   // ============================================
+  /**
+   * Get the current conversation state.
+   * Returns a copy to prevent external mutation of internal state.
+   */
   getState(): ConversationState {
     return { ...this.state }; // Return a copy to prevent mutation
   }

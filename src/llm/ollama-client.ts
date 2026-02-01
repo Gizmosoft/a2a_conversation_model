@@ -12,6 +12,10 @@ export class OllamaClient implements LLMClient {
     this.modelName = modelName;
   }
 
+  /**
+   * Generate a response from the Ollama API using the provided messages and system prompt.
+   * Handles timeout, connection errors, and converts responses to the standard format.
+   */
   async generate(options: LLMGenerateOptions): Promise<LLMGenerateResponse> {
     const { systemPrompt, messages, temperature = 0.8, maxTokens = 300 } = options;
 
@@ -97,6 +101,10 @@ export class OllamaClient implements LLMClient {
     }
   }
 
+  /**
+   * Format the Ollama API response into the standard LLM response format.
+   * Extracts content, determines finish reason, and calculates token usage if available.
+   */
   private formatResponse(response: any): LLMGenerateResponse {
     // Ollama response structure: { message: { content: string, role: string }, ... }
     const content = response.message?.content || "";
@@ -156,6 +164,11 @@ export class OllamaClient implements LLMClient {
 // ============================================
 // FACTORY FUNCTION
 // ============================================
+
+/**
+ * Create an Ollama client instance with base URL and model configuration.
+ * Falls back to environment variables or defaults if arguments are not provided.
+ */
 export function createOllamaClient(baseUrl?: string, modelName?: string): OllamaClient {
   // Access process.env via globalThis to avoid TypeScript errors when types: [] is set
   const env = (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } })

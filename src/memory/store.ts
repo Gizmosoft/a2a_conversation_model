@@ -22,6 +22,12 @@ export class EpisodicMemoryStore {
   // ============================================
   // DATABASE INITIALIZATION
   // ============================================
+
+  /**
+   * Initialize the database schema by creating tables and indexes.
+   * Sets up conversations and messages tables with proper foreign key constraints
+   * and performance indexes for efficient querying.
+   */
   private initializeSchema(): void {
     // Enable foreign keys
     this.db.pragma("foreign_keys = ON");

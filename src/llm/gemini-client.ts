@@ -16,6 +16,10 @@ export class GeminiClient implements LLMClient {
     this.modelName = modelName;
   }
 
+  /**
+   * Generate a response from the Gemini API using the provided messages and system prompt.
+   * Converts messages to Gemini format, manages conversation history, and handles errors.
+   */
   async generate(options: LLMGenerateOptions): Promise<LLMGenerateResponse> {
     const { systemPrompt, messages, temperature = 0.8, maxTokens = 300 } = options;
 
@@ -53,6 +57,10 @@ export class GeminiClient implements LLMClient {
     }
   }
 
+  /**
+   * Format the Gemini API response into the standard LLM response format.
+   * Extracts text content, finish reason, and token usage metadata.
+   */
   private formatResponse(response: any): LLMGenerateResponse {
     const text = response.text();
 
@@ -102,6 +110,11 @@ export class GeminiClient implements LLMClient {
 // ============================================
 // FACTORY FUNCTION
 // ============================================
+
+/**
+ * Create a Gemini client instance with API key and model configuration.
+ * Validates that an API key is provided either as an argument or in environment variables.
+ */
 export function createGeminiClient(apiKey?: string, modelName?: string): GeminiClient {
 
   if (!apiKey || typeof apiKey !== "string") {

@@ -136,6 +136,11 @@ export function buildFullPrompt(
 // ============================================
 // HELPERS
 // ============================================
+
+/**
+ * Format a list of personality traits into a natural language string.
+ * Handles singular, two-item, and multi-item lists with proper grammar.
+ */
 function formatTraitsList(traits: string[]): string {
   if (traits.length === 0) return "";
   if (traits.length === 1) return traits[0] || "";
@@ -146,6 +151,10 @@ function formatTraitsList(traits: string[]): string {
   return `${allButLast}, and ${last}`;
 }
 
+/**
+ * Format an array of strings into a bulleted list.
+ * Each item is prefixed with a dash and placed on a new line.
+ */
 function formatAsList(items: string[]): string {
   return items.map((item) => `- ${item}`).join("\n");
 }

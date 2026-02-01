@@ -18,6 +18,10 @@ interface Config {
   logDir?: string; // Directory for log files
 }
 
+/**
+ * Retrieve an environment variable by key, with optional default value.
+ * Throws an error if the variable is required but not found.
+ */
 function getEnvVar(key: string, defaultValue?: string): string {
   const value = process.env[key] ?? defaultValue;
   if (value === undefined) {

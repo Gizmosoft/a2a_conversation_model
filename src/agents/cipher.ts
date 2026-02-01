@@ -6,8 +6,10 @@ import { cipherPersonality } from "./personalities/cipher.js";
 import type { AgentConfig } from "./types.js";
 
 /**
- * Create Cipher agent configuration
- * Cipher is a special orchestrator agent that doesn't participate in conversations
+ * Create Cipher agent configuration.
+ * Cipher is a special orchestrator agent that manages conversation flow,
+ * memory, quality evaluation, and logging without participating in the actual dialogue.
+ * It operates programmatically in the background to ensure smooth conversations.
  */
 export function createCipherAgent(): AgentConfig {
   return {

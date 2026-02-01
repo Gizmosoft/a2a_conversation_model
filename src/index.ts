@@ -17,7 +17,10 @@ import { VectorDBPlugin, LangfusePlugin } from "./orchestrator/plugins/index.js"
 // ============================================
 let logger: ReturnType<typeof createLogger> | null = null;
 
-// Graceful shutdown handler
+/**
+ * Cleanup resources and close connections gracefully.
+ * Closes the logger and ensures all file handles are properly released.
+ */
 async function cleanup(): Promise<void> {
   if (logger) {
     await logger.close();
@@ -55,6 +58,11 @@ if (nodeProcess?.on) {
   });
 }
 
+/**
+ * Main application entry point.
+ * Initializes all components (logger, memory store, LLM client, agents, managers),
+ * creates the conversation orchestrator, and starts the conversation.
+ */
 async function main(): Promise<void> {
   // ============================================
   // INITIALIZE LOGGER
