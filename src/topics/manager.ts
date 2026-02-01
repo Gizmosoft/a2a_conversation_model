@@ -51,7 +51,7 @@ export class TopicManager {
     // Update conversation history
     this.state.conversationHistory.push({
       turnNumber,
-      topic: detection.dominantTopic,
+      ...(detection.dominantTopic && { topic: detection.dominantTopic }),
       message,
     });
 
@@ -81,9 +81,9 @@ export class TopicManager {
     if (this.state.conversationHistory.length >= 2) {
       const previousEntry =
         this.state.conversationHistory[this.state.conversationHistory.length - 2];
-      if (previousEntry.topic) {
+      if (previousEntry?.topic) {
         const previousDetection: TopicDetection = {
-          detectedTopics: previousEntry.topic ? [previousEntry.topic] : [],
+          detectedTopics: [previousEntry.topic],
           dominantTopic: previousEntry.topic,
           topicConfidence: 0.5,
           messageAnalysis: {

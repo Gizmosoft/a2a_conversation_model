@@ -36,3 +36,14 @@ export interface PastConversationSummary {
   firstMessage?: string;
   lastMessage?: string;
 }
+
+export interface WeightedMemory {
+  content: string;
+  conversationId: number;
+  turnNumber: number;
+  agentId: string;
+  weight: number; // 0-1, higher = more relevant
+  recencyScore: number; // 0-1, based on how recent
+  relevanceScore: number; // 0-1, based on topic similarity (if available)
+  frequencyScore: number; // 0-1, based on how often topic appears
+}

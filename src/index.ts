@@ -6,6 +6,11 @@ import { config } from "./config/config.js";
 import { EpisodicMemoryStore } from "./memory/store.js";
 import { createLogger, LogLevel, setDefaultLogger } from "./logger/index.js";
 import { TopicManager } from "./topics/index.js";
+import { EngagementTracker } from "./metrics/index.js";
+import { FlowManager } from "./conversation/index.js";
+import { createCipherAgent } from "./agents/cipher.js";
+import { CipherOrchestrator } from "./orchestrator/cipher-orchestrator.js";
+import { VectorDBPlugin, LangfusePlugin } from "./orchestrator/plugins/index.js";
 
 // ============================================
 // MAIN FUNCTION
@@ -103,18 +108,82 @@ async function main(): Promise<void> {
     });
 
     // ============================================
+    // INITIALIZE ENGAGEMENT TRACKER
+    // ============================================
+    logger.debug("Initializing engagement tracker");
+    const engagementTracker = new EngagementTracker({
+      windowSize: 10,
+      minMessageLength: 20,
+      maxMessageLength: 200,
+      lowEngagementThreshold: 0.4,
+      highEngagementThreshold: 0.7,
+    });
+    logger.info("Engagement tracker initialized");
+
+    // ============================================
+    // INITIALIZE FLOW MANAGER
+    // ============================================
+    logger.debug("Initializing flow manager");
+    const flowManager = new FlowManager({
+      enablePauses: true,
+      enableThinking: true,
+      enableInterruptions: false, // Disabled by default
+      enableAcknowledgment: true,
+      minPauseMs: 500,
+      maxPauseMs: 2000,
+      thinkingProbability: 0.1,
+      acknowledgmentProbability: 0.15,
+    });
+    logger.info("Flow manager initialized");
+
+    // ============================================
+    // CREATE CIPHER ORCHESTRATOR AGENT
+    // ============================================
+    logger.debug("Initializing Cipher orchestrator agent");
+    const cipherAgent = createCipherAgent();
+    
+    // Create plugins (stubs for future integrations)
+    const vectorDBPlugin = new VectorDBPlugin(false); // Disabled - enable when ready
+    const langfusePlugin = new LangfusePlugin(false); // Disabled - enable when ready
+
+    const cipher = new CipherOrchestrator(
+      {
+        maxContextMessages: 25,
+        enableContextSummarization: true,
+        enableVectorDB: false, // Future: enable when VectorDB is integrated
+        enableLangfuse: false, // Future: enable when Langfuse is integrated
+        plugins: [vectorDBPlugin, langfusePlugin],
+      },
+      {
+        memoryStore,
+        topicManager,
+        engagementTracker,
+        flowManager,
+      }
+    );
+    logger.info("Cipher orchestrator agent initialized", {
+      pluginsCount: 2,
+      maxContextMessages: 25,
+      enableContextSummarization: true,
+    });
+
+    // ============================================
     // CREATE AND RUN ORCHESTRATOR
     // ============================================
     const orchestrator = new ConversationOrchestrator({
       agentA: alice,
       agentB: bob,
       llmClient,
-      maxTurns: 10,
+      maxTurns: 10, // Only used if infiniteMode is false
       memoryStore,
       llmProvider,
       modelName: config.modelName, // Pass model name for storage
       usePastMemories: true, // Enable past memory retrieval
       topicManager, // Enable topic guidance
+      engagementTracker, // Enable engagement tracking
+      flowManager, // Enable conversation flow management
+      cipher, // Cipher handles all orchestration tasks
+      infiniteMode: true, // Enable infinite conversation mode
     });
 
     // Start the conversation
@@ -123,6 +192,10 @@ async function main(): Promise<void> {
     // Cleanup: Close memory store connection
     logger.debug("Closing memory store connection");
     memoryStore.close();
+
+    // Cleanup: Close Cipher and plugins
+    logger.debug("Cleaning up Cipher orchestrator");
+    await cipher.cleanup();
 
     logger.info("Application shutting down gracefully");
     await cleanup();

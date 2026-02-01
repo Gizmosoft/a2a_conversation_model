@@ -14,6 +14,7 @@ export interface TopicDetection {
   detectedTopics: Topic[];
   dominantTopic?: Topic;
   topicConfidence: number; // 0-1, confidence in topic detection
+  semanticSimilarity?: number; // 0-1, semantic similarity to topic (if semantic detection enabled)
   messageAnalysis: {
     wordCount: number;
     uniqueWords: number;

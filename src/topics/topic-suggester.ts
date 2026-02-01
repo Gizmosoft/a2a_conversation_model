@@ -22,7 +22,37 @@ export class TopicSuggester {
   }
 
   /**
-   * Detect if conversation has hit a lull
+   * Calculate semantic similarity between recent messages
+   * Low similarity indicates topic stagnation (lull)
+   */
+  private calculateRecentMessageSimilarity(
+    state: TopicGuidanceState,
+    currentMessage: string
+  ): number {
+    const recentMessages = state.conversationHistory.slice(-this.lullThreshold);
+    if (recentMessages.length < 2) {
+      return 0.5; // Not enough data
+    }
+
+    // Simple word overlap as proxy for semantic similarity
+    const currentWords = new Set(currentMessage.toLowerCase().split(/\s+/));
+    let totalSimilarity = 0;
+    let comparisons = 0;
+
+    for (const entry of recentMessages) {
+      const entryWords = new Set(entry.message.toLowerCase().split(/\s+/));
+      const intersection = new Set([...currentWords].filter((w) => entryWords.has(w)));
+      const union = new Set([...currentWords, ...entryWords]);
+      const similarity = union.size > 0 ? intersection.size / union.size : 0;
+      totalSimilarity += similarity;
+      comparisons++;
+    }
+
+    return comparisons > 0 ? totalSimilarity / comparisons : 0.5;
+  }
+
+  /**
+   * Detect if conversation has hit a lull using both length and semantic similarity
    */
   detectLull(state: TopicGuidanceState, currentTurn: number, currentMessage: string): boolean {
     // Check recent messages for short responses (potential lull)
@@ -38,7 +68,12 @@ export class TopicSuggester {
 
     const currentMessageShort = currentMessage.length < this.minMessageLength;
 
-    const lullDetected = allShortMessages && currentMessageShort;
+    // Check semantic similarity - if messages are very similar, it's a lull
+    const semanticSimilarity = this.calculateRecentMessageSimilarity(state, currentMessage);
+    const lowSemanticDiversity = semanticSimilarity > 0.7; // Too similar = repetitive
+
+    // Lull detected if: (all short messages) OR (low semantic diversity)
+    const lullDetected = (allShortMessages && currentMessageShort) || lowSemanticDiversity;
 
     if (lullDetected) {
       this.logger.warn("Conversation lull detected", {

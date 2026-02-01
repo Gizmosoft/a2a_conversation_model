@@ -176,7 +176,37 @@ export class TopicDetector {
   }
 
   /**
-   * Detect topics in a message
+   * Calculate simple semantic similarity between message and topic
+   * Uses word overlap and keyword matching as a proxy for semantic similarity
+   */
+  private calculateSemanticSimilarity(message: string, topic: Topic): number {
+    const messageLower = message.toLowerCase();
+    const messageWords = new Set(messageLower.split(/\s+/));
+    
+    // Count keyword matches
+    let keywordMatches = 0;
+    for (const keyword of topic.keywords) {
+      const keywordLower = keyword.toLowerCase();
+      // Check if keyword appears in message
+      if (messageLower.includes(keywordLower)) {
+        keywordMatches++;
+      }
+      // Also check if keyword words appear individually
+      const keywordWords = keywordLower.split(/\s+/);
+      for (const word of keywordWords) {
+        if (messageWords.has(word) && word.length > 2) {
+          keywordMatches += 0.5;
+        }
+      }
+    }
+    
+    // Normalize by number of keywords
+    const similarity = Math.min(1, keywordMatches / Math.max(1, topic.keywords.length * 0.5));
+    return similarity;
+  }
+
+  /**
+   * Detect topics in a message using both keyword and semantic matching
    */
   detectTopics(message: string, turnNumber: number): TopicDetection {
     const words = message.toLowerCase().split(/\s+/);
@@ -199,11 +229,26 @@ export class TopicDetector {
       if (matchCount > 0) {
         // Calculate relevance score based on match count and message length
         const relevanceScore = Math.min(1, matchCount / (wordCount * 0.1));
+        // Also calculate semantic similarity
+        const semanticSimilarity = this.calculateSemanticSimilarity(message, topic);
+        // Combine keyword relevance (60%) with semantic similarity (40%)
+        const combinedScore = relevanceScore * 0.6 + semanticSimilarity * 0.4;
         detectedTopics.push({
           ...topic,
           matchCount,
-          relevanceScore,
+          relevanceScore: combinedScore,
         });
+      } else {
+        // Even without keyword matches, check semantic similarity
+        const semanticSimilarity = this.calculateSemanticSimilarity(message, topic);
+        if (semanticSimilarity > 0.3) {
+          // If semantic similarity is high enough, include the topic
+          detectedTopics.push({
+            ...topic,
+            matchCount: 0,
+            relevanceScore: semanticSimilarity * 0.5, // Lower weight for semantic-only matches
+          });
+        }
       }
     }
 
@@ -212,6 +257,12 @@ export class TopicDetector {
 
     const dominantTopic = detectedTopics[0];
     const topicConfidence = dominantTopic ? dominantTopic.relevanceScore : 0;
+    
+    // Add semantic similarity to dominant topic if available
+    let semanticSimilarity: number | undefined;
+    if (dominantTopic) {
+      semanticSimilarity = this.calculateSemanticSimilarity(message, dominantTopic);
+    }
 
     // Simple sentiment analysis (basic keyword-based)
     const positiveWords = [
@@ -262,6 +313,7 @@ export class TopicDetector {
       detectedTopics: cleanedDetectedTopics,
       ...(cleanedDominantTopic && { dominantTopic: cleanedDominantTopic }),
       topicConfidence,
+      ...(semanticSimilarity !== undefined && { semanticSimilarity }),
       messageAnalysis: {
         wordCount,
         uniqueWords,

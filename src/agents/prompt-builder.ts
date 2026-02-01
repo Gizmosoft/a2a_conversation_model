@@ -83,6 +83,11 @@ export function buildContextInjection(context: ConversationContext): string | un
     );
   }
 
+  // Flow context - conversation rhythm, beats, mood
+  if (context.flowContext) {
+    parts.push(context.flowContext);
+  }
+
   // Memory injection - present as natural remembered context, not explicit retrieval
   // Only inject if we have memories and it's early in conversation, but NOT on opening turn
   // Opening turn should be a fresh greeting, memories can inform later turns naturally
@@ -92,21 +97,20 @@ export function buildContextInjection(context: ConversationContext): string | un
     context.conversationTurn > 1 &&
     context.conversationTurn <= 3
   ) {
-    // Format as very subtle background context - just topics, no explicit mention of "past" or "previous"
-    // Extract just the essence of what was discussed, not full messages
-    const memoryTopics = context.retrievedMemories
-      .slice(0, 2) // Only use first 2 most relevant
-      .map(m => {
-        // Extract just a few key words from the memory, not the full content
-        const words = m.split(/\s+/).slice(0, 5).join(" ");
-        return words;
-      })
-      .join(", ");
+    // Format as very subtle background context - extract themes/patterns, not verbatim quotes
+    // Only use the single most relevant memory to avoid overwhelming
+    const topMemory = context.retrievedMemories[0];
+    if (!topMemory) {
+      return parts.length > 0 ? parts.join("\n\n") : undefined;
+    }
     
-    // Inject very subtly - as if it's just things you naturally remember
+    // Extract just key themes (first 8-10 words max)
+    const words = topMemory.split(/\s+/).slice(0, 10).join(" ");
+    
+    // Inject very subtly - as if it's just something you naturally know
     parts.push(
-      `[Note: You naturally remember some things you've discussed with ${context.otherAgentName} before, like: ${memoryTopics}. ` +
-      `Use this naturally in conversation without mentioning that you're "remembering" or "recalling" anything.]`
+      `[Note: You naturally know that ${context.otherAgentName} has mentioned things like "${words}" before. ` +
+      `This is just background knowledge—use it naturally if relevant, but never mention remembering or recalling.]`
     );
   }
 

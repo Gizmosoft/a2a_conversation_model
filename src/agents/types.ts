@@ -25,6 +25,7 @@ export interface ConversationContext {
   isOpening: boolean; // First message?
   topicGuidance?: string; // Optional nudge toward a topic
   retrievedMemories?: string[]; // Relevant memories from past conversations
+  flowContext?: string; // Conversation flow context (beats, mood, etc.)
 }
 
 export interface PromptBuildResult {

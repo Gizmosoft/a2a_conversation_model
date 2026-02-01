@@ -4,6 +4,7 @@ import { buildFullPrompt } from "../agents/prompt-builder.js";
 import type { LLMMessage, LLMClient } from "../llm/types.js";
 import type { EpisodicMemoryStore } from "../memory/store.js";
 import type { TopicManager } from "../topics/manager.js";
+import type { CipherOrchestrator } from "./cipher-orchestrator.js";
 import { getDefaultLogger } from "../logger/index.js";
 
 // ============================================
@@ -21,8 +22,14 @@ export class ConversationOrchestrator {
   private conversationId: number | undefined;
   private modelName: string | undefined;
   private topicManager: TopicManager | undefined;
+  private engagementTracker: import("../metrics/index.js").EngagementTracker | undefined;
+  private flowManager: import("../conversation/index.js").FlowManager | undefined;
+  private cipher: CipherOrchestrator | undefined;
   private logger = getDefaultLogger();
   private pastMemoriesInjected: boolean = false; // Track if memories have been injected
+  private infiniteMode: boolean = false; // Whether conversation runs indefinitely
+  private engagementScore: number = 1.0; // Track conversation engagement (0-1)
+  private consecutiveLowEngagementTurns: number = 0; // Track consecutive low engagement turns
 
   constructor(config: OrchestratorConfig) {
     this.agentA = config.agentA;
@@ -34,6 +41,10 @@ export class ConversationOrchestrator {
     this.modelName = config.modelName;
     this.usePastMemories = config.usePastMemories ?? false;
     this.topicManager = config.topicManager;
+    this.engagementTracker = config.engagementTracker;
+    this.flowManager = config.flowManager;
+    this.cipher = config.cipher;
+    this.infiniteMode = config.infiniteMode ?? false;
 
     // Initialize conversation state
     this.state = {
@@ -117,17 +128,102 @@ export class ConversationOrchestrator {
   }
 
   // ============================================
+  // ENGAGEMENT SCORE CALCULATION
+  // ============================================
+  private updateEngagementScore(): void {
+    if (this.state.messages.length < 2) {
+      this.engagementScore = 1.0;
+      return;
+    }
+
+    // Calculate engagement based on:
+    // 1. Message length diversity (not all too short or too long)
+    // 2. Topic diversity (recent messages cover different topics)
+    // 3. Response quality (appropriate length, not repetitive)
+
+    const recentMessages = this.state.messages.slice(-5);
+    const avgLength = recentMessages.reduce((sum, m) => sum + m.content.length, 0) / recentMessages.length;
+    const lengthVariance = recentMessages.reduce((sum, m) => {
+      const diff = m.content.length - avgLength;
+      return sum + diff * diff;
+    }, 0) / recentMessages.length;
+
+    // Length diversity score (0-1)
+    const lengthScore = Math.min(1, lengthVariance / 1000); // Normalize
+
+    // Topic diversity (if topic manager available)
+    let topicScore = 0.5; // Default
+    if (this.topicManager) {
+      const state = this.topicManager.getState();
+      const recentTopics = state.conversationHistory.slice(-5).map((e) => e.topic?.id).filter(Boolean);
+      const uniqueTopics = new Set(recentTopics).size;
+      topicScore = uniqueTopics / Math.max(1, recentTopics.length);
+    }
+
+    // Response quality (appropriate length: 20-200 chars is good)
+    const lastMessage = this.state.messages[this.state.messages.length - 1];
+    const qualityScore = lastMessage
+      ? lastMessage.content.length >= 20 && lastMessage.content.length <= 200
+        ? 1.0
+        : lastMessage.content.length < 20
+          ? lastMessage.content.length / 20
+          : Math.max(0, 1 - (lastMessage.content.length - 200) / 200)
+      : 0.5;
+
+    // Weighted average
+    this.engagementScore = lengthScore * 0.3 + topicScore * 0.4 + qualityScore * 0.3;
+
+    // Update consecutive low engagement counter
+    if (this.engagementScore < 0.4) {
+      this.consecutiveLowEngagementTurns++;
+    } else {
+      this.consecutiveLowEngagementTurns = 0;
+    }
+  }
+
+  // ============================================
   // EXECUTE ONE CONVERSATION TURN
   // ============================================
   private async executeTurn(): Promise<void> {
     const currentAgent = this.getCurrentAgent();
     const otherAgent = this.getOtherAgent();
 
-    // Retrieve past memories if enabled, but only inject once early in conversation
-    // This prevents repetitive mentions of context retrieval
+    // Retrieve past memories via Cipher if available, otherwise use direct method
     let retrievedMemories: string[] = [];
     if (this.usePastMemories && !this.pastMemoriesInjected) {
-      retrievedMemories = await this.retrievePastMemories();
+      if (this.cipher) {
+        // Get current topic for relevance weighting
+        let currentTopic: string | undefined;
+        if (this.topicManager && this.state.messages.length > 0) {
+          const lastMsg = this.state.messages[this.state.messages.length - 1];
+          if (lastMsg) {
+            const analysis = this.topicManager.analyzeMessage(
+              lastMsg.content,
+              lastMsg.agentId,
+              this.state.currentTurn,
+              this.getOtherAgent()
+            );
+            currentTopic = analysis.detection.dominantTopic?.name;
+          }
+        }
+
+        // Use Cipher to retrieve weighted memories
+        const weightedMemories = await this.cipher.retrieveMemories(
+          this.agentA.id,
+          this.agentB.id,
+          currentTopic,
+          2
+        );
+        retrievedMemories = weightedMemories.map((m: { content: string; weight: number }) => {
+          // Extract just key words/phrases (first 10-12 words max)
+          const words = m.content.trim().split(/\s+/).slice(0, 12).join(" ");
+          return words;
+        });
+      } else {
+        // Fallback to direct retrieval
+        retrievedMemories = await this.retrievePastMemories();
+      }
+
       // Only mark as injected if we actually have memories and it's early in conversation
       if (retrievedMemories.length > 0 && this.state.currentTurn < 3) {
         this.pastMemoriesInjected = true;
@@ -163,6 +259,24 @@ export class ConversationOrchestrator {
       }
     }
 
+    // Get flow context via Cipher if available
+    let flowContext: string | undefined;
+    if (this.cipher) {
+      // Cipher manages flow
+      const flowGuidance = this.cipher.manageConversationFlow();
+      flowContext = flowGuidance.flowContext;
+      // Analyze previous message for flow if flow manager is available
+      if (this.flowManager && previousMessage) {
+        this.flowManager.analyzeMessage(previousMessage.content, this.state.currentTurn);
+      }
+    } else if (this.flowManager) {
+      // Fallback to direct flow manager
+      if (previousMessage) {
+        this.flowManager.analyzeMessage(previousMessage.content, this.state.currentTurn);
+      }
+      flowContext = this.flowManager.getFlowContext();
+    }
+
     // Build conversation context for this turn
     const context = {
       otherAgentName: otherAgent.personality.name,
@@ -170,6 +284,7 @@ export class ConversationOrchestrator {
       isOpening: this.state.currentTurn === 0,
       ...(retrievedMemories.length > 0 && { retrievedMemories }),
       ...(topicGuidance && { topicGuidance }),
+      ...(flowContext && { flowContext }),
     };
 
     // Build full prompt (system prompt + context injection)
@@ -236,6 +351,7 @@ export class ConversationOrchestrator {
     });
 
     // Analyze topic of the current message after it's generated
+    let detectedTopics: string[] = [];
     if (this.topicManager) {
       const analysis = this.topicManager.analyzeMessage(
         response.content,
@@ -245,6 +361,7 @@ export class ConversationOrchestrator {
       );
 
       if (analysis.detection.dominantTopic) {
+        detectedTopics = [analysis.detection.dominantTopic.name];
         this.logger.info("Topic detected in generated message", {
           turnNumber: this.state.currentTurn + 1,
           agentId: currentAgent.id,
@@ -254,6 +371,39 @@ export class ConversationOrchestrator {
           hasSuggestion: !!analysis.suggestion,
         });
       }
+    }
+
+    // Track message and evaluate quality via Cipher if available
+    if (this.engagementTracker) {
+      this.engagementTracker.trackMessage(response.content, detectedTopics);
+    }
+
+    // Use Cipher to evaluate quality and log message
+    if (this.cipher) {
+      const interventions = this.cipher.evaluateConversationQuality();
+      this.cipher.logMessageGenerated(
+        {
+          content: response.content,
+          agentId: currentAgent.id,
+          role: "assistant",
+        },
+        {
+          ...(this.conversationId && { conversationId: this.conversationId }),
+          turnNumber: this.state.currentTurn + 1,
+          agentAId: this.agentA.id,
+          agentBId: this.agentB.id,
+          currentAgentId: currentAgent.id,
+        }
+      );
+    } else if (this.engagementTracker) {
+      // Fallback to direct engagement tracking
+      const metrics = this.engagementTracker.getMetrics();
+      const intervention = this.engagementTracker.shouldIntervene();
+      this.logger.debug("Engagement metrics updated", {
+        turnNumber: this.state.currentTurn + 1,
+        overallEngagement: metrics.overallEngagement,
+        interventionType: intervention.type,
+      });
     }
 
     // Add response to conversation history
@@ -292,13 +442,26 @@ export class ConversationOrchestrator {
     this.state.currentAgentId =
       this.state.currentAgentId === this.agentA.id ? this.agentB.id : this.agentA.id;
 
-    // Update conversation in database
+    // Update conversation in database - delegate to Cipher if available
     if (this.memoryStore && this.conversationId) {
       try {
+        // In infinite mode, never mark as complete unless manually stopped
+        const isComplete = this.infiniteMode ? false : this.state.currentTurn >= this.maxTurns;
         this.memoryStore.updateConversation(this.conversationId, {
           totalTurns: this.state.currentTurn,
-          isComplete: this.state.currentTurn >= this.maxTurns,
+          isComplete,
         });
+
+        // Notify Cipher of state change
+        if (this.cipher) {
+          await this.cipher.saveConversationState(this.state, {
+            conversationId: this.conversationId,
+            turnNumber: this.state.currentTurn,
+            agentAId: this.agentA.id,
+            agentBId: this.agentB.id,
+            currentAgentId: this.state.currentAgentId,
+          });
+        }
       } catch (error) {
         this.logger.warn("Error updating conversation in memory store", {
           conversationId: this.conversationId,
@@ -308,8 +471,23 @@ export class ConversationOrchestrator {
     }
 
     // Check if conversation is complete
-    if (this.state.currentTurn >= this.maxTurns) {
+    // In infinite mode, only stop on error or manual intervention
+    if (!this.infiniteMode && this.state.currentTurn >= this.maxTurns) {
       this.state.isComplete = true;
+    }
+
+    // In infinite mode, check conversation health
+    if (this.infiniteMode) {
+      this.updateEngagementScore();
+      // If engagement is very low for many turns, suggest natural pause
+      if (this.engagementScore < 0.3 && this.consecutiveLowEngagementTurns > 10) {
+        this.logger.info("Low engagement detected in infinite mode", {
+          engagementScore: this.engagementScore,
+          consecutiveLowEngagementTurns: this.consecutiveLowEngagementTurns,
+          turnNumber: this.state.currentTurn,
+        });
+        // Don't stop, but log for monitoring - conversation can continue naturally
+      }
     }
   }
 
@@ -320,7 +498,8 @@ export class ConversationOrchestrator {
     this.logger.info("Starting conversation", {
       agentA: this.agentA.personality.name,
       agentB: this.agentB.personality.name,
-      maxTurns: this.maxTurns,
+      maxTurns: this.infiniteMode ? "infinite" : this.maxTurns,
+      infiniteMode: this.infiniteMode,
       usePastMemories: this.usePastMemories,
     });
 
@@ -361,11 +540,48 @@ export class ConversationOrchestrator {
         turnNumber,
         currentAgent: currentAgent.personality.name,
         conversationId: this.conversationId,
+        infiniteMode: this.infiniteMode,
       });
       
-      console.log(`[Turn ${turnNumber}] ${currentAgent.personality.name}:`);
+      if (this.infiniteMode) {
+        console.log(`[Turn ${turnNumber}] ${currentAgent.personality.name} (Infinite Mode):`);
+      } else {
+        console.log(`[Turn ${turnNumber}/${this.maxTurns}] ${currentAgent.personality.name}:`);
+      }
 
       try {
+        // Check flow guidance via Cipher if available
+        if (this.cipher) {
+          const flowGuidance = this.cipher.manageConversationFlow();
+          if (flowGuidance.shouldPause && flowGuidance.pauseDuration) {
+            this.logger.debug("Natural pause in conversation", {
+              turnNumber,
+              pauseDurationMs: flowGuidance.pauseDuration,
+            });
+            await new Promise((resolve) => setTimeout(resolve, flowGuidance.pauseDuration!));
+          }
+
+          if (flowGuidance.shouldShowThinking) {
+            console.log("...");
+            await new Promise((resolve) => setTimeout(resolve, 500 + Math.random() * 1000));
+          }
+        } else if (this.flowManager) {
+          // Fallback to direct flow manager
+          const pauseDuration = this.flowManager.shouldPause();
+          if (pauseDuration) {
+            this.logger.debug("Natural pause in conversation", {
+              turnNumber,
+              pauseDurationMs: pauseDuration,
+            });
+            await new Promise((resolve) => setTimeout(resolve, pauseDuration));
+          }
+
+          if (this.flowManager.shouldShowThinking()) {
+            console.log("...");
+            await new Promise((resolve) => setTimeout(resolve, 500 + Math.random() * 1000));
+          }
+        }
+
         await this.executeTurn();
 
         // Display the latest message
@@ -376,6 +592,7 @@ export class ConversationOrchestrator {
             agentId: lastMessage.agentId,
             messageLength: lastMessage.content.length,
             conversationId: this.conversationId,
+            engagementScore: this.engagementScore,
           });
           console.log(`${lastMessage.content}\n`);
         }

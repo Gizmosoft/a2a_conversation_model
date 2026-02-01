@@ -1,5 +1,10 @@
 import Database from "better-sqlite3";
-import type { ConversationRecord, MessageRecord, PastConversationSummary } from "./types.js";
+import type {
+  ConversationRecord,
+  MessageRecord,
+  PastConversationSummary,
+  WeightedMemory,
+} from "./types.js";
 
 // ============================================
 // EPISODIC MEMORY STORE
@@ -314,7 +319,10 @@ export class EpisodicMemoryStore {
         m.conversation_id as conversationId,
         m.turn_number as turnNumber,
         m.content,
-        m.agent_id as agentId
+        m.agent_id as agentId,
+        m.created_at as createdAt,
+        c.created_at as conversationCreatedAt,
+        c.total_turns as conversationTotalTurns
       FROM messages m
       INNER JOIN conversations c ON m.conversation_id = c.id
       WHERE (
@@ -326,18 +334,145 @@ export class EpisodicMemoryStore {
       LIMIT ?
     `);
 
-    const rows = stmt.all(agentAId, agentBId, agentBId, agentAId, limit) as Array<{
+    const rows = stmt.all(agentAId, agentBId, agentBId, agentAId, limit * 2) as Array<{
       conversationId: number;
       turnNumber: number;
       content: string;
       agentId: string;
+      createdAt: string;
+      conversationCreatedAt: string;
+      conversationTotalTurns: number;
     }>;
-    return rows.map((row) => ({
-      conversationId: row.conversationId,
-      turnNumber: row.turnNumber,
-      content: row.content,
-      agentId: row.agentId,
+
+    // Calculate weights and return top weighted memories
+    const now = Date.now();
+    const weightedMemories: WeightedMemory[] = rows.map((row) => {
+      const messageDate = new Date(row.createdAt).getTime();
+      const conversationDate = new Date(row.conversationCreatedAt).getTime();
+      
+      // Recency score: more recent = higher score
+      // Messages from last 24 hours get full score, decay over 7 days
+      const daysSinceMessage = (now - messageDate) / (1000 * 60 * 60 * 24);
+      const recencyScore = Math.max(0, 1 - daysSinceMessage / 7);
+      
+      // Conversation quality score: longer conversations = higher quality
+      const qualityScore = Math.min(1, row.conversationTotalTurns / 20);
+      
+      // Frequency score: if this topic/content appears often, it's more important
+      // For now, we'll use a simple heuristic: longer conversations = more frequent topics
+      const frequencyScore = qualityScore;
+      
+      // Relevance score: will be calculated externally based on current topic
+      // For now, default to 0.5
+      const relevanceScore = 0.5;
+      
+      // Combined weight: recency (40%) + quality (30%) + frequency (20%) + relevance (10%)
+      const weight = recencyScore * 0.4 + qualityScore * 0.3 + frequencyScore * 0.2 + relevanceScore * 0.1;
+      
+      return {
+        content: row.content,
+        conversationId: row.conversationId,
+        turnNumber: row.turnNumber,
+        agentId: row.agentId,
+        weight,
+        recencyScore,
+        relevanceScore,
+        frequencyScore,
+      };
+    });
+
+    // Sort by weight and return top N
+    weightedMemories.sort((a, b) => b.weight - a.weight);
+    return weightedMemories.slice(0, limit).map((m) => ({
+      conversationId: m.conversationId,
+      turnNumber: m.turnNumber,
+      content: m.content,
+      agentId: m.agentId,
     }));
+  }
+
+  /**
+   * Get weighted memories with topic relevance
+   */
+  getWeightedMemories(
+    agentAId: string,
+    agentBId: string,
+    currentTopic?: string,
+    limit: number = 5
+  ): WeightedMemory[] {
+    // Get recent messages from past conversations
+    const stmt = this.db.prepare(`
+      SELECT 
+        m.conversation_id as conversationId,
+        m.turn_number as turnNumber,
+        m.content,
+        m.agent_id as agentId,
+        m.created_at as createdAt,
+        c.created_at as conversationCreatedAt,
+        c.total_turns as conversationTotalTurns
+      FROM messages m
+      INNER JOIN conversations c ON m.conversation_id = c.id
+      WHERE (
+        (c.agent_a_id = ? AND c.agent_b_id = ?) OR
+        (c.agent_a_id = ? AND c.agent_b_id = ?)
+      )
+      AND c.is_complete = 1
+      ORDER BY m.created_at DESC
+      LIMIT ?
+    `);
+
+    const rows = stmt.all(agentAId, agentBId, agentBId, agentAId, limit * 3) as Array<{
+      conversationId: number;
+      turnNumber: number;
+      content: string;
+      agentId: string;
+      createdAt: string;
+      conversationCreatedAt: string;
+      conversationTotalTurns: number;
+    }>;
+
+    const now = Date.now();
+    const weightedMemories: WeightedMemory[] = rows.map((row) => {
+      const messageDate = new Date(row.createdAt).getTime();
+      
+      // Recency score
+      const daysSinceMessage = (now - messageDate) / (1000 * 60 * 60 * 24);
+      const recencyScore = Math.max(0, 1 - daysSinceMessage / 7);
+      
+      // Quality score (conversation length)
+      const qualityScore = Math.min(1, row.conversationTotalTurns / 20);
+      const frequencyScore = qualityScore;
+      
+      // Relevance score: simple keyword matching if currentTopic provided
+      let relevanceScore = 0.5;
+      if (currentTopic) {
+        const topicLower = currentTopic.toLowerCase();
+        const contentLower = row.content.toLowerCase();
+        // Simple keyword overlap
+        const topicWords = topicLower.split(/\s+/);
+        const contentWords = contentLower.split(/\s+/);
+        const matches = topicWords.filter((word) => contentWords.includes(word)).length;
+        relevanceScore = Math.min(1, matches / Math.max(1, topicWords.length));
+      }
+      
+      // Combined weight
+      const weight = recencyScore * 0.4 + qualityScore * 0.3 + frequencyScore * 0.2 + relevanceScore * 0.1;
+      
+      return {
+        content: row.content,
+        conversationId: row.conversationId,
+        turnNumber: row.turnNumber,
+        agentId: row.agentId,
+        weight,
+        recencyScore,
+        relevanceScore,
+        frequencyScore,
+      };
+    });
+
+    // Sort by weight and return top N
+    weightedMemories.sort((a, b) => b.weight - a.weight);
+    return weightedMemories.slice(0, limit);
   }
 
   // ============================================
