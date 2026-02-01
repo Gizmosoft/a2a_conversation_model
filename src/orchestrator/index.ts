@@ -100,15 +100,13 @@ export class ConversationOrchestrator {
         agentBId: this.agentB.id,
       });
 
-      // Format past messages more naturally - as if they're remembered context
-      // Only include the essential content, not meta-information
+      // Format past messages more naturally - extract just key phrases/topics
+      // Don't include full messages, just enough to inform natural conversation
       return pastMessages.map((msg) => {
-        // Extract just the essential content, formatted naturally
-        const content =
-          msg.content.length > 150
-            ? msg.content.substring(0, 150).trim() + "..."
-            : msg.content.trim();
-        return content;
+        // Extract just key words/phrases (first 10-12 words max)
+        // This gives context without full message content that might trigger meta-commentary
+        const words = msg.content.trim().split(/\s+/).slice(0, 12).join(" ");
+        return words;
       });
     } catch (error) {
       this.logger.warn("Error retrieving past memories", {
@@ -186,11 +184,19 @@ export class ConversationOrchestrator {
     }
 
     // If this is the opening turn and there are no messages yet, add a starter
+    // This ensures the first agent always starts with a greeting
     if (this.state.currentTurn === 0 && conversationMessages.length === 0) {
-      conversationMessages.push({
-        role: "user",
-        content: `You are starting a conversation with ${otherAgent.personality.name}.`,
-      });
+      if (retrievedMemories.length > 0) {
+        conversationMessages.push({
+          role: "user",
+          content: `You're meeting ${otherAgent.personality.name} again. Start with a natural greeting.`,
+        });
+      } else {
+        conversationMessages.push({
+          role: "user",
+          content: `You are starting a conversation with ${otherAgent.personality.name}. Begin with a natural greeting.`,
+        });
+      }
     }
 
     // Generate response from LLM

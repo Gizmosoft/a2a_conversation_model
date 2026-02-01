@@ -9,9 +9,16 @@ import type { LogEntry, LogLevel } from "./types.js";
 export class LogFileWriter {
   private logDir: string;
   private initialized: boolean = false;
+  private runTimestamp: string; // Timestamp for this run
 
   constructor(logDir: string) {
     this.logDir = logDir;
+    // Generate a unique timestamp for this run (YYYY-MM-DD-HHMMSS)
+    const now = new Date();
+    const date = now.toISOString().split("T")[0]; // YYYY-MM-DD
+    const timeStr = now.toTimeString().split(" ")[0];
+    const time = timeStr ? timeStr.replace(/:/g, "") : "000000"; // HHMMSS, fallback if undefined
+    this.runTimestamp = `${date}-${time}`;
   }
 
   /**
@@ -32,10 +39,10 @@ export class LogFileWriter {
 
   /**
    * Get file path for a log level
+   * Each run gets a unique file based on timestamp
    */
   private getLogFilePath(level: LogLevel): string {
-    const date = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-    const filename = `${level}-${date}.log`;
+    const filename = `${level}-${this.runTimestamp}.log`;
     return join(this.logDir, filename);
   }
 
