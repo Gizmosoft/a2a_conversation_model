@@ -5,7 +5,7 @@ import type { LLMMessage, LLMClient } from "../llm/types.js";
 import type { EpisodicMemoryStore } from "../memory/store.js";
 import type { TopicManager } from "../topics/manager.js";
 import type { CipherOrchestrator } from "./cipher-orchestrator.js";
-import { getDefaultLogger } from "../logger/index.js";
+import { getDefaultLogger, ChatLogWriter } from "../logger/index.js";
 
 // ============================================
 // ORCHESTRATOR CLASS
@@ -26,6 +26,8 @@ export class ConversationOrchestrator {
   private flowManager: import("../conversation/index.js").FlowManager | undefined;
   private cipher: CipherOrchestrator | undefined;
   private logger = getDefaultLogger();
+  private chatLogWriter: ChatLogWriter | undefined;
+  private logDir: string;
   private pastMemoriesInjected: boolean = false; // Track if memories have been injected
   private infiniteMode: boolean = false; // Whether conversation runs indefinitely
   private engagementScore: number = 1.0; // Track conversation engagement (0-1)
@@ -45,6 +47,7 @@ export class ConversationOrchestrator {
     this.flowManager = config.flowManager;
     this.cipher = config.cipher;
     this.infiniteMode = config.infiniteMode ?? false;
+    this.logDir = config.logDir ?? "src/logs";
 
     // Initialize conversation state
     this.state = {
@@ -318,12 +321,50 @@ export class ConversationOrchestrator {
     // Build full prompt (system prompt + context injection)
     const { systemPrompt, contextInjection } = buildFullPrompt(currentAgent, context);
 
-    // Build messages for LLM
-    const conversationMessages = this.buildMessagesForLLM();
-
-    // Add context injection as a user message if present
+    // Merge context injection into system prompt (not as a user message)
+    // This ensures guidance hints are instructions, not conversation content
+    let finalSystemPrompt = systemPrompt;
     if (contextInjection) {
-      conversationMessages.push({ role: "user", content: contextInjection });
+      finalSystemPrompt = `${systemPrompt}\n\n## Additional Context for This Turn\n${contextInjection}\n\nRemember: The context hints above are for your guidance only. Do NOT include them in your response. Just respond naturally as ${currentAgent.personality.name}.`;
+    }
+
+    // Reinforce brevity as conversation grows - prevent verbose monologues
+    const messageCount = this.state.messages.length;
+    if (messageCount > 10) {
+      // As conversation gets longer, strongly reinforce brevity
+      const brevityReminder = messageCount > 20 
+        ? "\n\nCRITICAL: Keep your response SHORT (1-2 sentences max). The conversation is getting long - be concise and natural. No monologues!"
+        : "\n\nIMPORTANT: Keep responses brief (1-2 sentences ideal). Be concise and conversational - avoid lengthy explanations.";
+      finalSystemPrompt = `${finalSystemPrompt}${brevityReminder}`;
+    }
+
+    // Build messages for LLM
+    let conversationMessages = this.buildMessagesForLLM();
+
+    // Apply context windowing via Cipher if available
+    // This prevents the context from growing unbounded and causing verbose responses
+    if (this.cipher && conversationMessages.length > 0) {
+      // Filter out system messages and convert to format expected by manageContextWindow
+      const messagesForWindowing = conversationMessages
+        .filter((msg) => msg.role !== "system")
+        .map((msg) => ({
+          content: msg.content,
+          agentId: msg.role === "assistant" ? this.state.currentAgentId : this.getOtherAgent().id,
+          role: msg.role as "user" | "assistant",
+        }));
+      
+      if (messagesForWindowing.length > 0) {
+        const windowedMessages = this.cipher.manageContextWindow(messagesForWindowing);
+        // Convert back to LLM message format, preserving any system messages
+        const systemMessages = conversationMessages.filter((msg) => msg.role === "system");
+        conversationMessages = [
+          ...systemMessages,
+          ...windowedMessages.map((msg) => ({
+            role: msg.role as "user" | "assistant",
+            content: msg.content,
+          })),
+        ];
+      }
     }
 
     // If this is the opening turn and there are no messages yet, add a starter
@@ -354,7 +395,7 @@ export class ConversationOrchestrator {
     let response;
     try {
       response = await this.llmClient.generate({
-        systemPrompt,
+        systemPrompt: finalSystemPrompt,
         messages: conversationMessages,
         temperature: currentAgent.temperature,
         maxTokens: currentAgent.maxTokensPerResponse,
@@ -370,6 +411,62 @@ export class ConversationOrchestrator {
       console.error(error instanceof Error ? error.message : String(error));
       throw error; // Re-throw to stop the conversation
     }
+
+    // Clean response: Remove any guidance hints that might have leaked into the response
+    // This filters out patterns like "[Your response should...]" or "[Flow: ...]" or "[Mood: ...]"
+    let cleanedContent = response.content;
+    cleanedContent = cleanedContent
+      .replace(/\[Your response should[^\]]*\]/gi, "")
+      .replace(/\[Flow:[^\]]*\]/gi, "")
+      .replace(/\[Mood:[^\]]*\]/gi, "")
+      .replace(/\[Subtle hint:[^\]]*\]/gi, "")
+      .replace(/\[Setting:[^\]]*\]/gi, "")
+      .replace(/\[Note:[^\]]*\]/gi, "")
+      .trim();
+
+    // Enforce brevity: Trim overly long responses to maintain natural conversation flow
+    // Target: 1-3 sentences (approximately 50-200 words)
+    const sentences = cleanedContent.match(/[^.!?]+[.!?]+/g) || [];
+    const wordCount = cleanedContent.split(/\s+/).length;
+    
+    // If response is too long (more than 3 sentences or >250 words), trim it
+    if (sentences.length > 3 || wordCount > 250) {
+      // Take first 3 sentences, or first 200 words, whichever is shorter
+      if (sentences.length > 3) {
+        cleanedContent = sentences.slice(0, 3).join(" ").trim();
+        this.logger.debug("Response trimmed to 3 sentences", {
+          originalLength: wordCount,
+          trimmedLength: cleanedContent.split(/\s+/).length,
+        });
+      } else if (wordCount > 250) {
+        // Trim to ~200 words at sentence boundary
+        const words = cleanedContent.split(/\s+/);
+        let trimmedWords: string[] = [];
+        
+        for (const word of words) {
+          trimmedWords.push(word);
+          
+          // Check if we've hit a sentence boundary and are close to 200 words
+          if (/[.!?]/.test(word) && trimmedWords.length >= 180) {
+            break;
+          }
+        }
+        
+        cleanedContent = trimmedWords.join(" ").trim();
+        // Ensure it ends with proper punctuation
+        if (!/[.!?]$/.test(cleanedContent)) {
+          cleanedContent += ".";
+        }
+        
+        this.logger.debug("Response trimmed to ~200 words", {
+          originalLength: wordCount,
+          trimmedLength: trimmedWords.length,
+        });
+      }
+    }
+
+    // Update response with cleaned and trimmed content
+    response.content = cleanedContent;
 
     this.logger.debug("LLM response generated", {
       agentId: currentAgent.id,
@@ -536,6 +633,10 @@ export class ConversationOrchestrator {
       usePastMemories: this.usePastMemories,
     });
 
+    // Initialize chat log writer for this conversation run
+    this.chatLogWriter = new ChatLogWriter(this.logDir);
+    await this.chatLogWriter.initialize();
+
     console.log("Starting conversation between Alice and Bob...\n");
 
     // Initialize conversation in database if memory store is available
@@ -628,6 +729,16 @@ export class ConversationOrchestrator {
             engagementScore: this.engagementScore,
           });
           console.log(`${lastMessage.content}\n`);
+
+          // Write message to chat log file
+          if (this.chatLogWriter) {
+            const agentName = lastMessage.agentId === this.agentA.id 
+              ? this.agentA.personality.name 
+              : this.agentB.personality.name;
+            this.chatLogWriter.writeMessage(turnNumber, agentName, lastMessage.content).catch(() => {
+              // Silently ignore chat log write errors to prevent crashes
+            });
+          }
         }
       } catch (error) {
         this.logger.error("Error executing conversation turn", error instanceof Error ? error : new Error(String(error)), {
@@ -672,6 +783,11 @@ export class ConversationOrchestrator {
           error: error instanceof Error ? error.message : String(error),
         });
       }
+    }
+
+    // Close chat log writer
+    if (this.chatLogWriter) {
+      await this.chatLogWriter.close();
     }
 
     return this.state;

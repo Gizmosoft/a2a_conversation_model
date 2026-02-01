@@ -23,6 +23,7 @@ export interface OrchestratorConfig {
   engagementTracker?: EngagementTracker; // Optional engagement metrics tracker
   flowManager?: FlowManager; // Optional conversation flow manager
   cipher?: CipherOrchestrator; // Cipher orchestrator agent - handles all orchestration tasks
+  logDir?: string; // Directory for chat log files (default: "src/logs")
 }
 
 // ============================================

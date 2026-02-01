@@ -192,6 +192,7 @@ async function main(): Promise<void> {
       flowManager, // Enable conversation flow management
       cipher, // Cipher handles all orchestration tasks
       infiniteMode: true, // Enable infinite conversation mode
+      logDir: config.logDir || "src/logs", // Directory for chat log files
     });
 
     // Start the conversation
