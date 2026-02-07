@@ -47,3 +47,12 @@ export interface WeightedMemory {
   relevanceScore: number; // 0-1, based on topic similarity (if available)
   frequencyScore: number; // 0-1, based on how often topic appears
 }
+
+export interface ConversationSummary {
+  id?: number;
+  conversationId: number;
+  messageRangeStart: number; // First message index in range (0-based)
+  messageRangeEnd: number; // Last message index in range (exclusive)
+  summary: string; // The summarized content
+  createdAt?: Date;
+}

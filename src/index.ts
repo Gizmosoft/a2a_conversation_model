@@ -156,7 +156,7 @@ async function main(): Promise<void> {
 
     const cipher = new CipherOrchestrator(
       {
-        maxContextMessages: 25,
+        maxContextMessages: config.maxContextMessages || 25, // Configurable via MAX_CONTEXT_MESSAGES env var
         enableContextSummarization: true,
         enableVectorDB: false, // Future: enable when VectorDB is integrated
         enableLangfuse: false, // Future: enable when Langfuse is integrated
@@ -167,6 +167,7 @@ async function main(): Promise<void> {
         topicManager,
         engagementTracker,
         flowManager,
+        llmClient, // Pass LLM client for LLM-based summarization
       }
     );
     logger.info("Cipher orchestrator agent initialized", {

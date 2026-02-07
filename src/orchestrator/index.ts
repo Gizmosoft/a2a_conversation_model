@@ -238,17 +238,22 @@ export class ConversationOrchestrator {
           }
         }
 
-        // Use Cipher to retrieve weighted memories
+        // Use Cipher to retrieve weighted memories (with LLM summarization for better context preservation)
         const weightedMemories = await this.cipher.retrieveMemories(
           this.agentA.id,
           this.agentB.id,
           currentTopic,
-          2
+          2,
+          true // Enable LLM summarization for past conversations
         );
+        // Use summarized memories directly - they're already concise and context-rich
         retrievedMemories = weightedMemories.map((m: { content: string; weight: number }) => {
-          // Extract just key words/phrases (first 10-12 words max)
-          const words = m.content.trim().split(/\s+/).slice(0, 12).join(" ");
-          return words;
+          // Summarized memories are already concise, but limit to ~50 words max for safety
+          const words = m.content.trim().split(/\s+/);
+          if (words.length > 50) {
+            return words.slice(0, 50).join(" ") + "...";
+          }
+          return m.content.trim();
         });
       } else {
         // Fallback to direct retrieval
@@ -354,7 +359,7 @@ export class ConversationOrchestrator {
         }));
       
       if (messagesForWindowing.length > 0) {
-        const windowedMessages = this.cipher.manageContextWindow(messagesForWindowing);
+        const windowedMessages = await this.cipher.manageContextWindow(messagesForWindowing);
         // Convert back to LLM message format, preserving any system messages
         const systemMessages = conversationMessages.filter((msg) => msg.role === "system");
         conversationMessages = [
@@ -659,6 +664,11 @@ export class ConversationOrchestrator {
           agentB: this.agentB.personality.name,
         });
         console.log(`[Memory] Conversation saved with ID: ${this.conversationId}\n`);
+
+        // Set conversation ID in Cipher to enable summary persistence and loading
+        if (this.cipher && this.conversationId) {
+          this.cipher.setConversationId(this.conversationId);
+        }
       } catch (error) {
         this.logger.warn("Error creating conversation in memory store", {
           error: error instanceof Error ? error.message : String(error),

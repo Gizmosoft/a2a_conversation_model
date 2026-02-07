@@ -97,21 +97,30 @@ export function buildContextInjection(context: ConversationContext): string | un
     context.conversationTurn > 1 &&
     context.conversationTurn <= 3
   ) {
-    // Format as very subtle background context - extract themes/patterns, not verbatim quotes
-    // Only use the single most relevant memory to avoid overwhelming
+    // Use the top memory (already summarized by LLM if available, so it's concise and context-rich)
     const topMemory = context.retrievedMemories[0];
     if (!topMemory) {
       return parts.length > 0 ? parts.join("\n\n") : undefined;
     }
     
-    // Extract just key themes (first 8-10 words max)
-    const words = topMemory.split(/\s+/).slice(0, 10).join(" ");
-    
-    // Inject very subtly - as if it's just something you naturally know
-    parts.push(
-      `[Note: You naturally know that ${context.otherAgentName} has mentioned things like "${words}" before. ` +
-      `This is just background knowledge—use it naturally if relevant, but never mention remembering or recalling.]`
-    );
+    // If memory is already summarized (longer than 10 words), use it more directly
+    // Otherwise, extract key themes for subtle injection
+    const words = topMemory.split(/\s+/);
+    if (words.length > 15) {
+      // This is a summarized memory - use it more directly but still subtly
+      const summary = words.slice(0, 40).join(" "); // Limit to ~40 words
+      parts.push(
+        `[Note: You naturally remember that in past conversations, ${context.otherAgentName} mentioned: "${summary}". ` +
+        `This is background knowledge—use it naturally if relevant, but never mention remembering or recalling.]`
+      );
+    } else {
+      // Short memory snippet - use subtle injection
+      const keyWords = words.slice(0, 10).join(" ");
+      parts.push(
+        `[Note: You naturally know that ${context.otherAgentName} has mentioned things like "${keyWords}" before. ` +
+        `This is just background knowledge—use it naturally if relevant, but never mention remembering or recalling.]`
+      );
+    }
   }
 
   return parts.length > 0 ? parts.join("\n\n") : undefined;

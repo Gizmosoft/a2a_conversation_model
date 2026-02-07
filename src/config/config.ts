@@ -16,6 +16,7 @@ interface Config {
   port: number;
   logLevel?: string; // "debug" | "info" | "warn" | "error"
   logDir?: string; // Directory for log files
+  maxContextMessages?: number; // Maximum messages before summarization (default: 25)
 }
 
 /**
@@ -38,4 +39,5 @@ export const config: Config = {
   port: parseInt(getEnvVar("PORT", "3000"), 10),
   logLevel: getEnvVar("LOG_LEVEL", "info"),
   logDir: getEnvVar("LOG_DIR", "src/logs"),
+  maxContextMessages: parseInt(getEnvVar("MAX_CONTEXT_MESSAGES", "25"), 10), // Configurable threshold for summarization
 };

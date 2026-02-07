@@ -4,6 +4,7 @@ import type {
   MessageRecord,
   PastConversationSummary,
   WeightedMemory,
+  ConversationSummary,
 } from "./types.js";
 
 // ============================================
@@ -64,6 +65,20 @@ export class EpisodicMemoryStore {
       )
     `);
 
+    // Create conversation_summaries table for persisting incremental summaries
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS conversation_summaries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id INTEGER NOT NULL,
+        message_range_start INTEGER NOT NULL,
+        message_range_end INTEGER NOT NULL,
+        summary TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+        UNIQUE(conversation_id, message_range_start, message_range_end)
+      )
+    `);
+
     // Create indexes for performance
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_messages_conversation 
@@ -74,6 +89,12 @@ export class EpisodicMemoryStore {
       
       CREATE INDEX IF NOT EXISTS idx_conversations_agents 
       ON conversations(agent_a_id, agent_b_id);
+      
+      CREATE INDEX IF NOT EXISTS idx_summaries_conversation 
+      ON conversation_summaries(conversation_id);
+      
+      CREATE INDEX IF NOT EXISTS idx_summaries_range 
+      ON conversation_summaries(conversation_id, message_range_start, message_range_end);
     `);
   }
 
@@ -488,6 +509,117 @@ export class EpisodicMemoryStore {
   /**
    * Close the database connection
    */
+  // ============================================
+  // CONVERSATION SUMMARY OPERATIONS
+  // ============================================
+
+  /**
+   * Save a conversation summary for a specific message range.
+   * Used for incremental summarization caching.
+   */
+  saveSummary(summary: ConversationSummary): void {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO conversation_summaries (
+        conversation_id, message_range_start, message_range_end, summary
+      ) VALUES (?, ?, ?, ?)
+    `);
+
+    stmt.run(
+      summary.conversationId,
+      summary.messageRangeStart,
+      summary.messageRangeEnd,
+      summary.summary
+    );
+  }
+
+  /**
+   * Get the most recent summary for a conversation up to a specific message range.
+   * Returns the summary that covers the largest range up to (but not exceeding) the requested end.
+   */
+  getSummaryForRange(conversationId: number, messageRangeEnd: number): ConversationSummary | null {
+    const stmt = this.db.prepare(`
+      SELECT 
+        id, conversation_id as conversationId,
+        message_range_start as messageRangeStart,
+        message_range_end as messageRangeEnd,
+        summary,
+        created_at as createdAt
+      FROM conversation_summaries
+      WHERE conversation_id = ? 
+        AND message_range_end <= ?
+      ORDER BY message_range_end DESC
+      LIMIT 1
+    `);
+
+    const row = stmt.get(conversationId, messageRangeEnd) as {
+      id: number;
+      conversationId: number;
+      messageRangeStart: number;
+      messageRangeEnd: number;
+      summary: string;
+      createdAt: string;
+    } | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      id: row.id,
+      conversationId: row.conversationId,
+      messageRangeStart: row.messageRangeStart,
+      messageRangeEnd: row.messageRangeEnd,
+      summary: row.summary,
+      createdAt: new Date(row.createdAt),
+    };
+  }
+
+  /**
+   * Get all summaries for a conversation (for loading on startup).
+   */
+  getSummariesForConversation(conversationId: number): ConversationSummary[] {
+    const stmt = this.db.prepare(`
+      SELECT 
+        id, conversation_id as conversationId,
+        message_range_start as messageRangeStart,
+        message_range_end as messageRangeEnd,
+        summary,
+        created_at as createdAt
+      FROM conversation_summaries
+      WHERE conversation_id = ?
+      ORDER BY message_range_end ASC
+    `);
+
+    const rows = stmt.all(conversationId) as Array<{
+      id: number;
+      conversationId: number;
+      messageRangeStart: number;
+      messageRangeEnd: number;
+      summary: string;
+      createdAt: string;
+    }>;
+
+    return rows.map((row) => ({
+      id: row.id,
+      conversationId: row.conversationId,
+      messageRangeStart: row.messageRangeStart,
+      messageRangeEnd: row.messageRangeEnd,
+      summary: row.summary,
+      createdAt: new Date(row.createdAt),
+    }));
+  }
+
+  /**
+   * Delete all summaries for a conversation (cleanup).
+   */
+  deleteSummariesForConversation(conversationId: number): void {
+    const stmt = this.db.prepare(`
+      DELETE FROM conversation_summaries
+      WHERE conversation_id = ?
+    `);
+    stmt.run(conversationId);
+  }
+
   close(): void {
     this.db.close();
   }
