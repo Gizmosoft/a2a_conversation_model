@@ -157,6 +157,7 @@ async function main(): Promise<void> {
     const cipher = new CipherOrchestrator(
       {
         maxContextMessages: config.maxContextMessages || 25, // Configurable via MAX_CONTEXT_MESSAGES env var
+        summarizationBatchSize: config.summarizationBatchSize || 5, // Configurable via SUMMARIZATION_BATCH_SIZE env var
         enableContextSummarization: true,
         enableVectorDB: false, // Future: enable when VectorDB is integrated
         enableLangfuse: false, // Future: enable when Langfuse is integrated

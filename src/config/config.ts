@@ -17,6 +17,7 @@ interface Config {
   logLevel?: string; // "debug" | "info" | "warn" | "error"
   logDir?: string; // Directory for log files
   maxContextMessages?: number; // Maximum messages before summarization (default: 25)
+  summarizationBatchSize?: number; // New messages needed in older segment before a merge fires (default: 5)
 }
 
 /**
@@ -40,4 +41,5 @@ export const config: Config = {
   logLevel: getEnvVar("LOG_LEVEL", "info"),
   logDir: getEnvVar("LOG_DIR", "src/logs"),
   maxContextMessages: parseInt(getEnvVar("MAX_CONTEXT_MESSAGES", "25"), 10), // Configurable threshold for summarization
+  summarizationBatchSize: parseInt(getEnvVar("SUMMARIZATION_BATCH_SIZE", "5"), 10), // Merge fires every N new messages in older segment
 };

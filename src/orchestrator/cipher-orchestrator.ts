@@ -49,6 +49,7 @@ export class CipherOrchestrator {
   ) {
     this.config = {
       maxContextMessages: config.maxContextMessages ?? 25,
+      summarizationBatchSize: config.summarizationBatchSize ?? 5,
       enableContextSummarization: config.enableContextSummarization ?? true,
       enableVectorDB: config.enableVectorDB ?? false,
       enableLangfuse: config.enableLangfuse ?? false,
@@ -188,62 +189,89 @@ export class CipherOrchestrator {
       }
     }
 
-    // Step 3: Incremental summarization - only summarize new messages
-    if (currentRangeEnd > this.lastSummarizedCount) {
-      const newMessages = olderMessages.slice(this.lastSummarizedCount);
-      const previousSummary = this.lastSummarizedCount > 0
-        ? this.summaryCache.get(`range-0-${this.lastSummarizedCount}`)
-        : undefined;
+    // Step 3: Incremental summarization - only summarize when enough new messages have accumulated
+    const newMessageCount = currentRangeEnd - this.lastSummarizedCount;
+    const batchSize = this.config.summarizationBatchSize;
 
-      if (previousSummary && newMessages.length > 0) {
-        // Incremental: summarize only new messages and merge
-        const incrementalSummary = await this.summarizeIncremental(
-          previousSummary,
-          newMessages
-        );
-        
-        // Store in memory cache
-        this.summaryCache.set(cacheKey, incrementalSummary);
-        this.lastSummarizedCount = currentRangeEnd;
-        
-        // Mark for persistence on cleanup
-        if (this.currentConversationId !== undefined) {
-          this.pendingSummaries.push({
-            rangeStart: 0,
-            rangeEnd: currentRangeEnd,
-            summary: incrementalSummary,
-          });
-        }
+    if (newMessageCount > 0) {
+      // Only trigger a merge when the number of unsummarized messages reaches the batch size,
+      // OR when there is no existing summary yet (first summarization).
+      // Between batches, reuse the last known summary to avoid an LLM call every turn.
+      const hasPreviousSummary = this.lastSummarizedCount > 0;
+      const batchReached = newMessageCount >= batchSize;
 
-        this.logger.debug("Incremental summary created", {
-          previousRangeEnd: this.lastSummarizedCount - newMessages.length,
-          newRangeEnd: currentRangeEnd,
-          newMessagesCount: newMessages.length,
-        });
+      if (!hasPreviousSummary || batchReached) {
+        const newMessages = olderMessages.slice(this.lastSummarizedCount);
+        const previousSummary = hasPreviousSummary
+          ? this.summaryCache.get(`range-0-${this.lastSummarizedCount}`)
+          : undefined;
 
-        return incrementalSummary;
-      } else if (newMessages.length > 0) {
-        // First time - full summarization
-        const fullSummary = await this.summarizeContext(olderMessages);
-        if (fullSummary) {
-          this.summaryCache.set(cacheKey, fullSummary);
+        if (previousSummary && newMessages.length > 0) {
+          // Incremental: summarize only the new batch of messages and merge with previous summary
+          const incrementalSummary = await this.summarizeIncremental(
+            previousSummary,
+            newMessages
+          );
+
+          // Store in memory cache under the new range key
+          this.summaryCache.set(cacheKey, incrementalSummary);
           this.lastSummarizedCount = currentRangeEnd;
-          
-          // Mark for persistence
+
+          // Queue for persistence to SQLite on cleanup.
+          // Replace any prior pending entry — only the latest merged summary needs to be persisted.
           if (this.currentConversationId !== undefined) {
+            this.pendingSummaries = this.pendingSummaries.filter((s) => s.rangeStart !== 0);
             this.pendingSummaries.push({
               rangeStart: 0,
               rangeEnd: currentRangeEnd,
-              summary: fullSummary,
+              summary: incrementalSummary,
             });
           }
 
-          return fullSummary;
+          this.logger.debug("Incremental summary created (batch)", {
+            batchSize,
+            newMessagesInBatch: newMessages.length,
+            newRangeEnd: currentRangeEnd,
+          });
+
+          return incrementalSummary;
+        } else if (newMessages.length > 0) {
+          // First time threshold is crossed - full summarization of all older messages
+          const fullSummary = await this.summarizeContext(olderMessages);
+          if (fullSummary) {
+            this.summaryCache.set(cacheKey, fullSummary);
+            this.lastSummarizedCount = currentRangeEnd;
+
+            // Queue for persistence to SQLite on cleanup.
+            // Replace any prior pending entry — only the latest summary needs to be persisted.
+            if (this.currentConversationId !== undefined) {
+              this.pendingSummaries = this.pendingSummaries.filter((s) => s.rangeStart !== 0);
+              this.pendingSummaries.push({
+                rangeStart: 0,
+                rangeEnd: currentRangeEnd,
+                summary: fullSummary,
+              });
+            }
+
+            this.logger.debug("Initial full summary created", {
+              messagesCount: olderMessages.length,
+              rangeEnd: currentRangeEnd,
+            });
+
+            return fullSummary;
+          }
         }
+      } else {
+        // Batch size not yet reached — reuse the most recent summary without an LLM call
+        this.logger.debug("Reusing existing summary (batch not yet reached)", {
+          newMessageCount,
+          batchSize,
+          lastSummarizedCount: this.lastSummarizedCount,
+        });
       }
     }
 
-    // Fallback: use existing summary if available
+    // Fallback: return the most recent cached summary if available
     if (this.lastSummarizedCount > 0) {
       const existingKey = `range-0-${this.lastSummarizedCount}`;
       if (this.summaryCache.has(existingKey)) {

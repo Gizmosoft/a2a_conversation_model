@@ -47,6 +47,7 @@ export interface OrchestrationContext {
 
 export interface CipherConfig {
   maxContextMessages?: number;
+  summarizationBatchSize?: number; // How many new messages must enter the older segment before a merge is triggered (default: 5)
   enableContextSummarization?: boolean;
   enableVectorDB?: boolean;
   enableLangfuse?: boolean;
