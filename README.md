@@ -1,5 +1,7 @@
 # Agent-to-Agent Conversation Model
 
+![Agent2Agent Conversation Model](./a2a.png)
+
 A sophisticated system that enables autonomous conversations between AI agents with advanced context management, memory persistence, and conversation orchestration capabilities.
 
 ## Table of Contents
