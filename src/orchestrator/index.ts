@@ -5,6 +5,7 @@ import type { LLMMessage, LLMClient } from "../llm/types.js";
 import type { EpisodicMemoryStore } from "../memory/store.js";
 import type { TopicManager } from "../topics/manager.js";
 import type { CipherOrchestrator } from "./cipher-orchestrator.js";
+import type { MetricsCollector } from "../metrics/run-metrics.js";
 import { getDefaultLogger, ChatLogWriter } from "../logger/index.js";
 
 // ============================================
@@ -25,6 +26,7 @@ export class ConversationOrchestrator {
   private engagementTracker: import("../metrics/index.js").EngagementTracker | undefined;
   private flowManager: import("../conversation/index.js").FlowManager | undefined;
   private cipher: CipherOrchestrator | undefined;
+  private metrics: MetricsCollector | undefined;
   private logger = getDefaultLogger();
   private chatLogWriter: ChatLogWriter | undefined;
   private logDir: string;
@@ -46,6 +48,7 @@ export class ConversationOrchestrator {
     this.engagementTracker = config.engagementTracker;
     this.flowManager = config.flowManager;
     this.cipher = config.cipher;
+    this.metrics = config.metrics;
     this.infiniteMode = config.infiniteMode ?? false;
     this.logDir = config.logDir ?? "src/logs";
 
@@ -246,6 +249,10 @@ export class ConversationOrchestrator {
           2,
           true // Enable LLM summarization for past conversations
         );
+        // Record how many candidates Cipher surfaced before injection. Today
+        // this equals the injected count; once a Jev relevance gate is added
+        // inside retrieveMemories, candidates will exceed injected.
+        this.metrics?.addRetrievedCandidates(weightedMemories.length);
         // Use summarized memories directly - they're already concise and context-rich
         retrievedMemories = weightedMemories.map((m: { content: string; weight: number }) => {
           // Summarized memories are already concise, but limit to ~50 words max for safety
@@ -258,7 +265,11 @@ export class ConversationOrchestrator {
       } else {
         // Fallback to direct retrieval
         retrievedMemories = await this.retrievePastMemories();
+        this.metrics?.addRetrievedCandidates(retrievedMemories.length);
       }
+
+      // Record how many memories were actually injected into the prompt.
+      this.metrics?.addInjectedMemories(retrievedMemories.length);
 
       // Only mark as injected if we actually have memories and it's early in conversation
       if (retrievedMemories.length > 0 && this.state.currentTurn < 3) {
@@ -404,6 +415,7 @@ export class ConversationOrchestrator {
         messages: conversationMessages,
         temperature: currentAgent.temperature,
         maxTokens: currentAgent.maxTokensPerResponse,
+        metadata: { callType: "turn-generation" },
       });
     } catch (error) {
       this.logger.error("Error generating LLM response", error instanceof Error ? error : new Error(String(error)), {
@@ -727,6 +739,19 @@ export class ConversationOrchestrator {
         }
 
         await this.executeTurn();
+
+        // Sample metrics after each completed turn. Snapshots are refreshed
+        // every turn so a report written on shutdown reflects the latest state.
+        if (this.metrics) {
+          this.metrics.recordTurn();
+          this.metrics.sampleMemory(this.state.currentTurn);
+          if (this.memoryStore) {
+            this.metrics.setDbSizeBytes(this.memoryStore.getDatabaseSizeBytes());
+          }
+          if (this.cipher) {
+            this.metrics.setCacheStats(this.cipher.getCacheStats());
+          }
+        }
 
         // Display the latest message
         const lastMessage = this.state.messages[this.state.messages.length - 1];

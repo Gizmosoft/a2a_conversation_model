@@ -103,6 +103,21 @@ export class CipherOrchestrator {
     return this.plugins.get(name);
   }
 
+  /**
+   * Snapshot the in-memory summary cache footprint for metrics reporting.
+   */
+  getCacheStats(): {
+    summaryCacheEntries: number;
+    pendingSummaries: number;
+    conversationSummaryChars: number;
+  } {
+    return {
+      summaryCacheEntries: this.summaryCache.size,
+      pendingSummaries: this.pendingSummaries.length,
+      conversationSummaryChars: this.conversationSummary?.length ?? 0,
+    };
+  }
+
   // ============================================
   // CONTEXT MANAGEMENT
   // ============================================
@@ -327,6 +342,7 @@ MERGED: [combined summary]`;
         messages: [{ role: "user", content: incrementalPrompt }],
         temperature: 0.3,
         maxTokens: 200,
+        metadata: { callType: "context-summarization" },
       });
 
       // Extract merged summary from response
@@ -425,6 +441,7 @@ Summary:`;
       messages: [{ role: "user", content: summaryPrompt }],
       temperature: 0.3, // Lower temperature for more consistent, factual summaries
       maxTokens: 200, // Limit to ~200 tokens for efficiency while preserving context
+      metadata: { callType: "context-summarization" },
     });
 
     const summary = response.content.trim();
@@ -804,6 +821,7 @@ Provide a summary for each memory, numbered [1], [2], etc.:`;
         messages: [{ role: "user", content: summaryPrompt }],
         temperature: 0.3, // Lower temperature for consistent, factual summaries
         maxTokens: 300, // Allow enough tokens for multiple memory summaries
+        metadata: { callType: "memory-summarization" },
       });
 
       // Parse the response to extract individual summaries
