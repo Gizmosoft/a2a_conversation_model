@@ -18,6 +18,8 @@ interface Config {
   logDir?: string; // Directory for log files
   maxContextMessages?: number; // Maximum messages before summarization (default: 25)
   summarizationBatchSize?: number; // New messages needed in older segment before a merge fires (default: 5)
+  enableMetrics?: boolean; // Whether to collect and write per-run metrics (default: true)
+  metricsDir?: string; // Directory for per-run metrics JSON reports (default: same as logDir)
 }
 
 /**
@@ -42,4 +44,6 @@ export const config: Config = {
   logDir: getEnvVar("LOG_DIR", "src/logs"),
   maxContextMessages: parseInt(getEnvVar("MAX_CONTEXT_MESSAGES", "25"), 10), // Configurable threshold for summarization
   summarizationBatchSize: parseInt(getEnvVar("SUMMARIZATION_BATCH_SIZE", "5"), 10), // Merge fires every N new messages in older segment
+  enableMetrics: getEnvVar("ENABLE_METRICS", "true").toLowerCase() !== "false", // Set ENABLE_METRICS=false to disable
+  metricsDir: getEnvVar("METRICS_DIR", getEnvVar("LOG_DIR", "src/logs")), // Defaults to the log directory
 };

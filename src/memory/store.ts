@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { statSync } from "node:fs";
 import type {
   ConversationRecord,
   MessageRecord,
@@ -618,6 +619,18 @@ export class EpisodicMemoryStore {
       WHERE conversation_id = ?
     `);
     stmt.run(conversationId);
+  }
+
+  /**
+   * Return the on-disk size of the SQLite database file in bytes.
+   * Returns 0 if the file cannot be stat'd (e.g. in-memory database).
+   */
+  getDatabaseSizeBytes(): number {
+    try {
+      return statSync(this.dbPath).size;
+    } catch {
+      return 0;
+    }
   }
 
   close(): void {

@@ -1,4 +1,7 @@
+import { execSync } from "node:child_process";
 import { createGeminiClient, createOllamaClient } from "./llm/index.js";
+import { instrumentLLMClient } from "./llm/instrumented-client.js";
+import { MetricsCollector } from "./metrics/run-metrics.js";
 import { createAgent } from "./agents/agent-builder.js";
 import { alicePersonality, bobPersonality } from "./agents/personalities/index.js";
 import { ConversationOrchestrator } from "./orchestrator/index.js";
@@ -16,12 +19,47 @@ import { VectorDBPlugin, LangfusePlugin } from "./orchestrator/plugins/index.js"
 // MAIN FUNCTION
 // ============================================
 let logger: ReturnType<typeof createLogger> | null = null;
+let metrics: MetricsCollector | null = null;
+let metricsReportWritten = false;
+
+/**
+ * Read the current git commit for labelling the metrics report.
+ * Returns undefined when not in a git checkout or git is unavailable.
+ */
+function getGitSha(): string | undefined {
+  try {
+    return execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Write the per-run metrics report exactly once (idempotent across the
+ * multiple cleanup paths: normal completion, signals, and fatal errors).
+ */
+async function flushMetrics(): Promise<void> {
+  if (!metrics || !metrics.isEnabled() || metricsReportWritten) {
+    return;
+  }
+  metricsReportWritten = true;
+  try {
+    const result = await metrics.writeReport(config.metricsDir || config.logDir || "src/logs");
+    if (result) {
+      console.log("\n" + metrics.formatSummary(result.report));
+      console.log(`[Metrics] Report written to: ${result.jsonPath}\n`);
+    }
+  } catch (error) {
+    console.error("[Metrics] Failed to write report:", error);
+  }
+}
 
 /**
  * Cleanup resources and close connections gracefully.
- * Closes the logger and ensures all file handles are properly released.
+ * Writes the metrics report, then closes the logger and releases file handles.
  */
 async function cleanup(): Promise<void> {
+  await flushMetrics();
   if (logger) {
     await logger.close();
   }
@@ -93,11 +131,36 @@ async function main(): Promise<void> {
     logger.info("Episodic memory store initialized");
 
     // ============================================
+    // INITIALIZE METRICS COLLECTOR
+    // ============================================
+    // Baseline measurement harness. Wraps the LLM client so every call is
+    // timed and token-counted; also samples memory footprint per turn. Writes
+    // a metrics-<timestamp>.json report on shutdown.
+    metrics = new MetricsCollector(config.enableMetrics ?? true);
+
+    // ============================================
     // INITIALIZE LLM CLIENT
     // ============================================
-    // const llmClient = createGeminiClient(config.geminiApiKey, config.modelName);
-    const llmClient = createOllamaClient(config.ollamaHostUrl, config.modelName);
+    // const baseLLMClient = createGeminiClient(config.geminiApiKey, config.modelName);
+    const baseLLMClient = createOllamaClient(config.ollamaHostUrl, config.modelName);
     const llmProvider = "ollama"; // or "gemini" when using Gemini
+    // Wrap the client for metrics collection (transparent no-op when disabled).
+    const llmClient = instrumentLLMClient(baseLLMClient, metrics);
+
+    const gitSha = getGitSha();
+    metrics.startRun({
+      provider: llmProvider,
+      jevEnabled: false, // Baseline run: Jev not yet integrated
+      ...(config.modelName && { model: config.modelName }),
+      ...(gitSha && { gitSha }),
+      ...(config.nodeBuild && { label: config.nodeBuild }),
+      config: {
+        maxContextMessages: config.maxContextMessages ?? 25,
+        summarizationBatchSize: config.summarizationBatchSize ?? 5,
+        infiniteMode: true,
+        usePastMemories: true,
+      },
+    });
 
     // ============================================
     // CREATE AGENTS
@@ -195,6 +258,7 @@ async function main(): Promise<void> {
       cipher, // Cipher handles all orchestration tasks
       infiniteMode: true, // Enable infinite conversation mode
       logDir: config.logDir || "src/logs", // Directory for chat log files
+      metrics, // Per-run baseline metrics collector
     });
 
     // Start the conversation

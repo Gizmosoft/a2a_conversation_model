@@ -5,6 +5,7 @@ import type { TopicManager } from "../topics/manager.js";
 import type { EngagementTracker } from "../metrics/engagement-tracker.js";
 import type { FlowManager } from "../conversation/index.js";
 import type { CipherOrchestrator } from "./cipher-orchestrator.js";
+import type { MetricsCollector } from "../metrics/run-metrics.js";
 
 // ============================================
 // ORCHESTRATOR CONFIGURATION
@@ -24,6 +25,7 @@ export interface OrchestratorConfig {
   flowManager?: FlowManager; // Optional conversation flow manager
   cipher?: CipherOrchestrator; // Cipher orchestrator agent - handles all orchestration tasks
   logDir?: string; // Directory for chat log files (default: "src/logs")
+  metrics?: MetricsCollector; // Optional per-run metrics collector
 }
 
 // ============================================

@@ -6,11 +6,24 @@ export interface LLMMessage {
   content: string;
 }
 
+/**
+ * Purpose tag for an LLM call, used to attribute latency and token usage
+ * to the work that triggered it (turn generation vs. summarization).
+ */
+export type LLMCallType =
+  | "turn-generation"
+  | "context-summarization"
+  | "memory-summarization"
+  | "unknown";
+
 export interface LLMGenerateOptions {
   systemPrompt: string;
   messages: LLMMessage[];
   temperature?: number;
   maxTokens?: number;
+  metadata?: {
+    callType?: LLMCallType;
+  };
 }
 
 export interface LLMGenerateResponse {
